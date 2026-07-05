@@ -28,7 +28,14 @@ pub const ray = @import("geometry/ray.zig");
 pub const contains = @import("geometry/contains.zig");
 
 test {
-    @import("std").testing.refAllDeclsRecursive(@This());
+    _ = @import("geometry/aabb.zig");
+    _ = @import("geometry/plane.zig");
+    _ = @import("geometry/sphere.zig");
+    _ = @import("geometry/capsule.zig");
+    _ = @import("geometry/obb.zig");
+    _ = @import("geometry/overlap.zig");
+    _ = @import("geometry/ray.zig");
+    _ = @import("geometry/contains.zig");
 }
 
 

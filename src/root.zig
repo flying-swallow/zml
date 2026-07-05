@@ -25,7 +25,10 @@ pub const Mat3f64 = Mat(f64, 3, 3);
 pub const geom = @import("geometry.zig");
 
 test {
-    @import("std").testing.refAllDeclsRecursive(@This());
+    _ = @import("vector.zig");
+    _ = @import("matrix.zig");
+    _ = @import("quat.zig");
+    _ = @import("geometry.zig");
 }
 
 pub fn to_radians(degrees: anytype) @TypeOf(degrees) {

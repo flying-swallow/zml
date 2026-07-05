@@ -18,27 +18,27 @@ pub fn build(b: *std.Build) void {
         test_step.dependOn(&run_tests.step);
     }
     
-    {
-        const zbench_module = b.dependency("zbench", .{
+    if (b.isRoot()) {
+        if (b.lazyDependency("zbench", .{
             .target = target,
             .optimize = optimize,
-        });
-        const bench = b.addExecutable(.{
-            .name = "bench",
-            .root_module = b.createModule(.{
-                .root_source_file = b.path("bench/bench.zig"),
-                .target = target,
-                .optimize = optimize,
-                .imports = &.{ 
-                    .{ .name = "zla", .module = root_module },
-                    .{ .name = "zbench", .module = zbench_module.module("zbench")}
-                },
-            }),
-        });
-        b.installArtifact(bench);
-        const bench_step = b.step("bench", "run benchmark");
-        const bench_cmd = b.addRunArtifact(bench);
-        bench_step.dependOn(&bench_cmd.step);
+        })) |zbench_dep| {
+            const bench = b.addExecutable(.{
+                .name = "bench",
+                .root_module = b.createModule(.{
+                    .root_source_file = b.path("bench/bench.zig"),
+                    .target = target,
+                    .optimize = optimize,
+                    .imports = &.{
+                        .{ .name = "zla", .module = root_module },
+                        .{ .name = "zbench", .module = zbench_dep.module("zbench") },
+                    },
+                }),
+            });
+            const bench_step = b.step("bench", "run benchmark");
+            const bench_cmd = b.addRunArtifact(bench);
+            bench_step.dependOn(&bench_cmd.step);
+        }
     }
 
 }

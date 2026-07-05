@@ -239,7 +239,7 @@ pub fn Mat(comptime T: type, comptime cols_: usize, comptime rows_: usize) type 
         pub const zero: Self = .from_column_major_array(@splat(@splat(0)));
 
         pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
-            var max_widths: [cols]usize = [_]usize{0} ** cols;
+            var max_widths: [cols]usize = @splat(0);
             for (0..cols) |c| {
                 for (0..rows) |r| {
                     const len = std.fmt.count("{d}", .{self.items[c][r]});

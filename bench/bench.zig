@@ -21,7 +21,7 @@ fn benchmark_multiply(comptime size: usize) type {
             };
         }
 
-        pub fn run(self: @This(), _: std.mem.Allocator) void {
+        pub fn run(self: *@This(), _: std.mem.Allocator) void {
             std.mem.doNotOptimizeAway(@call(.never_inline, Matrix512.mul, .{ self.a, self.b }));
         }
     };
@@ -39,7 +39,7 @@ fn bench_sin_cos_fused(comptime size: usize) type {
             return .{ .angles = val };
         }
 
-        pub fn run(self: @This(), _: std.mem.Allocator) void {
+        pub fn run(self: *@This(), _: std.mem.Allocator) void {
            std.mem.doNotOptimizeAway(@call(.never_inline, zla.vec.sin_cos, .{self.angles}));
         }
     };
@@ -57,7 +57,7 @@ fn benchmark_sin_cos_system(comptime size: usize) type {
             return .{ .angles = val };
         }
 
-        pub fn run(self: @This(), _: std.mem.Allocator) void {
+        pub fn run(self: *@This(), _: std.mem.Allocator) void {
             var sin_val: [size]f32 = undefined;
             var cos_val: [size]f32 = undefined;
             for(self.angles, 0..) |angle, i| {
@@ -71,8 +71,8 @@ fn benchmark_sin_cos_system(comptime size: usize) type {
 }
 
 pub fn main() !void {
-    var stdout = std.fs.File.stdout().writerStreaming(&.{});
-    const writer = &stdout.interface;
+    const io = std.Io.Threaded.global_single_threaded.io();
+    const stdout: std.Io.File = .stdout();
 
     var bench = zbench.Benchmark.init(std.heap.page_allocator, .{});
     defer bench.deinit();
@@ -90,7 +90,6 @@ pub fn main() !void {
         .iterations = 256,
     });
 
-    try writer.writeAll("\n");
-    try bench.run(writer);
+    try bench.run(io, stdout);
 }
 
