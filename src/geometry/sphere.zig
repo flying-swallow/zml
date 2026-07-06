@@ -1,5 +1,5 @@
-const zla = @import("../root.zig");
-const geometry = zla.geom;
+const zml = @import("../root.zig");
+const geometry = zml.geom;
 
 pub fn Sphere(comptime T: type) type {
     return struct {

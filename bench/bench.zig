@@ -1,10 +1,10 @@
 const std = @import("std");
 const zbench = @import("zbench");
-const zla = @import("zla");
+const zml = @import("zml");
 
 fn benchmark_multiply(comptime size: usize) type {
     return struct {
-        const Matrix512 = zla.Mat(f32, size, size);
+        const Matrix512 = zml.Mat(f32, size, size);
         a: Matrix512,
         b: Matrix512,
 
@@ -40,7 +40,7 @@ fn bench_sin_cos_fused(comptime size: usize) type {
         }
 
         pub fn run(self: *@This(), _: std.mem.Allocator) void {
-           std.mem.doNotOptimizeAway(@call(.never_inline, zla.vec.sin_cos, .{self.angles}));
+           std.mem.doNotOptimizeAway(@call(.never_inline, zml.vec.sin_cos, .{self.angles}));
         }
     };
 }

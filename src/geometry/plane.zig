@@ -2,8 +2,8 @@ const std = @import("std");
 const vec = @import("../vector.zig");
 const Mat = @import("../matrix.zig").Mat;
 
-const zla = @import("../root.zig");
-const geometry = zla.geom;
+const zml = @import("../root.zig");
+const geometry = zml.geom;
 
 pub fn Plane(comptime T: type) type {
     return struct {

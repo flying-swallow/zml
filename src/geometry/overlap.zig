@@ -1,5 +1,5 @@
 const std = @import("std");
-const zla = @import("../root.zig");
+const zml = @import("../root.zig");
 const Mat = @import("../matrix.zig").Mat;
 const geometry = @import("../geometry.zig");
 const Sphere = @import("sphere.zig").Sphere;
@@ -52,6 +52,58 @@ pub fn overlap_aabb_aabb_4(a: anytype, minX: @Vector(4, @TypeOf(a).inner_type), 
     return !(nooverlap_x | nooverlap_y | nooverlap_z);
 }
 
+/// Axis-aligned box vs triangle overlap using the separating-axis theorem
+/// (Akenine-Möller). The triangle is given by its three vertices.
+pub fn overlap_aabb_triangle(
+    aabb: anytype,
+    t0: @Vector(3, @TypeOf(aabb).child),
+    t1: @Vector(3, @TypeOf(aabb).child),
+    t2: @Vector(3, @TypeOf(aabb).child),
+) bool {
+    comptime std.debug.assert(@TypeOf(aabb).primative_type == .AABB);
+    const T = @TypeOf(aabb).child;
+    const V = @Vector(3, T);
+
+    const c = aabb.get_center();
+    const h = aabb.get_size() * @as(V, @splat(0.5));
+    const v0 = t0 - c;
+    const v1 = t1 - c;
+    const v2 = t2 - c;
+    const edges = [3]V{ v1 - v0, v2 - v1, v0 - v2 };
+    const verts = [3]V{ v0, v1, v2 };
+
+    // 9 axes: cross products of the triangle edges with the box axes.
+    inline for (0..3) |ei| {
+        inline for (0..3) |ai| {
+            var unit: V = .{ 0, 0, 0 };
+            unit[ai] = 1;
+            const axis = vector.cross(edges[ei], unit);
+            var pmin: T = std.math.inf(T);
+            var pmax: T = -std.math.inf(T);
+            inline for (0..3) |k| {
+                const p = vector.dot(axis, verts[k]);
+                pmin = @min(pmin, p);
+                pmax = @max(pmax, p);
+            }
+            const r = vector.dot(h, @abs(axis));
+            if (pmin > r or pmax < -r) return false;
+        }
+    }
+
+    // 3 box face normals: the triangle's AABB must overlap the box.
+    inline for (0..3) |i| {
+        const tmin = @min(v0[i], @min(v1[i], v2[i]));
+        const tmax = @max(v0[i], @max(v1[i], v2[i]));
+        if (tmin > h[i] or tmax < -h[i]) return false;
+    }
+
+    // 1 axis: the triangle plane normal.
+    const n = vector.cross(edges[0], edges[1]);
+    if (@abs(vector.dot(n, v0)) > vector.dot(h, @abs(n))) return false;
+
+    return true;
+}
+
 // generic overlap function
 pub inline fn overlap(a: anytype, b: anytype) bool {
     const a_primative: geometry.Primative = @TypeOf(a).primative_type;
@@ -59,6 +111,18 @@ pub inline fn overlap(a: anytype, b: anytype) bool {
     if (a_primative == .Sphere and b_primative == .Sphere) return overlap_sphere_sphere(a, b);
     if (a_primative == .AABB and b_primative == .AABB) return overlap_aabb_aabb(a, b);
     @compileError("Unsupported primative overlap: " ++ @typeName(a_primative) ++ " " ++ @typeName(b_primative));
+}
+
+test overlap_aabb_triangle {
+    const box = geometry.AABB(f32).from_two_points(.{ -1, -1, -1 }, .{ 1, 1, 1 });
+    // Triangle slicing through the box.
+    try std.testing.expect(overlap_aabb_triangle(box, .{ -2, 0, 0 }, .{ 2, 0, 0 }, .{ 0, 2, 0 }));
+    // Triangle with a vertex inside the box.
+    try std.testing.expect(overlap_aabb_triangle(box, .{ 0, 0, 0 }, .{ 5, 0, 0 }, .{ 0, 5, 0 }));
+    // Triangle far outside the box.
+    try std.testing.expect(!overlap_aabb_triangle(box, .{ 5, 5, 5 }, .{ 6, 5, 5 }, .{ 5, 6, 5 }));
+    // Triangle separated by a face plane (all z > 1).
+    try std.testing.expect(!overlap_aabb_triangle(box, .{ 0, 0, 2 }, .{ 1, 0, 3 }, .{ 0, 1, 2.5 }));
 }
 
 test overlap_sphere_sphere {

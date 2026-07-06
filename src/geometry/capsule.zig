@@ -1,5 +1,5 @@
 const geometry = @import("../geometry.zig");
-const zla = @import("../root.zig");
+const zml = @import("../root.zig");
 
 pub fn Capsule(comptime T: type) type {
     return struct {
@@ -15,7 +15,7 @@ pub fn Capsule(comptime T: type) type {
         }
 
         pub fn get_cylinder_height(self: Self) T {
-            return zla.vec.distance(self.hemisphere_centers[0], self.hemisphere_centers[1]);
+            return zml.vec.distance(self.hemisphere_centers[0], self.hemisphere_centers[1]);
         }
 
         pub fn get_total_height(self: Self) T {

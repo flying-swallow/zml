@@ -1,13 +1,12 @@
 const std = @import("std");
 const vector = @import("vector.zig");
-const zla = @import("root.zig");
+const meta = @import("meta.zig");
+const zml = @import("root.zig");
 
 pub const Quat4f32 = @Vector(4, f32);
 pub const Quat4f64 = @Vector(4, f64);
 
-fn map_to_vector(a: anytype) @Vector(@typeInfo(@TypeOf(a)).vector.len, std.meta.Child(@TypeOf(a))) {
-    const type_info = @typeInfo(@TypeOf(a));
-    if (type_info != .vector and type_info != .array) @compileError("Expected vector or array type, got: " ++ @typeName(@TypeOf(a)));
+fn map_to_vector(a: anytype) meta.AsVector(@TypeOf(a)) {
     return a;
 }
 
@@ -125,20 +124,78 @@ pub fn norm(q: anytype) std.meta.Float(@bitSizeOf(std.meta.Child(@TypeOf(q)))) {
     return vector.norm(q);
 }
 
-//pub fn to_axis_angle(q: anytype) struct {
-//    axis: @Vector(3, info(@TypeOf(q)).child),
-//    angle: info(@TypeOf(q)).child,
-//} {
-//    if (info(@TypeOf(q)).len != 4) @compileError("vector must have four elements for to_axis_angle() to be defined");
-//    const qw_clamped = std.math.clamp(q[3], -1.0, 1.0);
-//    const angle = 2.0 * std.math.acos(qw_clamped);
-//    const s = std.math.sqrt(1.0 - qw_clamped * qw_clamped);
-//    if (s < 0.001) { // If s is close to zero then direction of axis is not important
-//        return .{ .axis = .{ 1, 0, 0 }, .angle = angle };
-//    } else {
-//        return .{ .axis = .{ q[0] / s, q[1] / s, q[2] / s }, .angle = angle };
-//    }
-//}
+pub fn to_axis_angle(q: anytype) struct {
+    axis: @Vector(3, std.meta.Child(@TypeOf(q))),
+    angle: std.meta.Child(@TypeOf(q)),
+} {
+    comptime {
+        std.debug.assert(@typeInfo(@TypeOf(q)) == .vector);
+        std.debug.assert(@typeInfo(@TypeOf(q)).vector.len == 4);
+    }
+    const C = std.meta.Child(@TypeOf(q));
+    const qw_clamped = std.math.clamp(q[3], -1.0, 1.0);
+    const angle = 2.0 * std.math.acos(qw_clamped);
+    const s = std.math.sqrt(1.0 - qw_clamped * qw_clamped);
+    if (s < 0.001) { // axis direction is arbitrary when the angle is close to zero
+        return .{ .axis = .{ 1, 0, 0 }, .angle = angle };
+    }
+    return .{ .axis = @Vector(3, C){ q[0] / s, q[1] / s, q[2] / s }, .angle = angle };
+}
+
+/// Rotate a 3D vector by a (unit) quaternion. Uses the branchless
+/// t = 2·(u × v); v' = v + w·t + u × t form (u = q.xyz).
+pub fn rotate_vector(q: anytype, v: @Vector(3, std.meta.Child(@TypeOf(q)))) @Vector(3, std.meta.Child(@TypeOf(q))) {
+    comptime {
+        std.debug.assert(@typeInfo(@TypeOf(q)) == .vector);
+        std.debug.assert(@typeInfo(@TypeOf(q)).vector.len == 4);
+    }
+    const C = std.meta.Child(@TypeOf(q));
+    const u = @Vector(3, C){ q[0], q[1], q[2] };
+    const t = @as(@Vector(3, C), @splat(2)) * vector.cross(u, v);
+    return v + @as(@Vector(3, C), @splat(q[3])) * t + vector.cross(u, t);
+}
+
+/// Rotate a 3D vector by the inverse of a (unit) quaternion.
+pub fn rotate_vector_inv(q: anytype, v: @Vector(3, std.meta.Child(@TypeOf(q)))) @Vector(3, std.meta.Child(@TypeOf(q))) {
+    return rotate_vector(conjugate(q), v);
+}
+
+/// Convert a quaternion (x, y, z, w) to a 4x4 rotation matrix.
+pub fn to_matrix(q: anytype) zml.Mat(std.meta.Child(@TypeOf(q)), 4, 4) {
+    comptime {
+        std.debug.assert(@typeInfo(@TypeOf(q)) == .vector);
+        std.debug.assert(@typeInfo(@TypeOf(q)).vector.len == 4);
+    }
+    return zml.Mat(std.meta.Child(@TypeOf(q)), 4, 4).from_quat(q);
+}
+
+/// Extract a quaternion from the rotation part of a matrix (Shepperd's method).
+pub fn from_matrix(m: anytype) @Vector(4, @TypeOf(m).Type) {
+    // element(row, col) is stored column-major as items[col][row]
+    const m00 = m.items[0][0];
+    const m01 = m.items[1][0];
+    const m02 = m.items[2][0];
+    const m10 = m.items[0][1];
+    const m11 = m.items[1][1];
+    const m12 = m.items[2][1];
+    const m20 = m.items[0][2];
+    const m21 = m.items[1][2];
+    const m22 = m.items[2][2];
+    const trace = m00 + m11 + m22;
+    if (trace > 0) {
+        const s = @sqrt(trace + 1.0) * 2.0; // s = 4 * qw
+        return .{ (m21 - m12) / s, (m02 - m20) / s, (m10 - m01) / s, 0.25 * s };
+    } else if (m00 > m11 and m00 > m22) {
+        const s = @sqrt(1.0 + m00 - m11 - m22) * 2.0; // s = 4 * qx
+        return .{ 0.25 * s, (m01 + m10) / s, (m02 + m20) / s, (m21 - m12) / s };
+    } else if (m11 > m22) {
+        const s = @sqrt(1.0 + m11 - m00 - m22) * 2.0; // s = 4 * qy
+        return .{ (m01 + m10) / s, 0.25 * s, (m12 + m21) / s, (m02 - m20) / s };
+    } else {
+        const s = @sqrt(1.0 + m22 - m00 - m11) * 2.0; // s = 4 * qz
+        return .{ (m02 + m20) / s, (m12 + m21) / s, 0.25 * s, (m10 - m01) / s };
+    }
+}
 
 pub fn conjugate(q: anytype) @TypeOf(q) {
     comptime {
@@ -275,7 +332,7 @@ test mul {
 
 test slerp {
     const v1 = identity(f32);
-    const v2: Quat4f32 = from_rotation(zla.Vec3f32{ 1, 0, 0 }, 0.99 * std.math.pi);
+    const v2: Quat4f32 = from_rotation(zml.Vec3f32{ 1, 0, 0 }, 0.99 * std.math.pi);
     try std.testing.expect(vector.is_close_default(slerp(v1, v2, 0.25), from_rotation(x_axis(f32), 0.25 * 0.99 * std.math.pi)));
 
     const v3 = vector.normalize(Quat4f32{ 1, 2, 3, 4 });
@@ -293,3 +350,40 @@ test lerp {
 //    var qy: Quat4f32 = from_eular_angles(from_rotation(y_axis(f32), std.math.degreesToRadians(-20)));
 //    var qz: Quat4f32 = from_eular_angles(from_rotation(z_axis(f32), std.math.degreesToRadians(-30)));
 //}
+
+test rotate_vector {
+    const q = from_rotation(z_axis(f32), std.math.pi / 2.0);
+    // 90° about +z takes +x to +y (right-handed, active rotation).
+    try std.testing.expect(vector.is_close(rotate_vector(q, @Vector(3, f32){ 1, 0, 0 }), .{ 0, 1, 0 }, 1e-6));
+    // inverse rotation undoes it
+    const v = @Vector(3, f32){ 0.3, 0.5, -0.2 };
+    try std.testing.expect(vector.is_close(rotate_vector_inv(q, rotate_vector(q, v)), v, 1e-6));
+}
+
+test to_matrix {
+    const q = vector.normalize(from_eular_angles(@Vector(3, f32){ 0.3, -0.6, 1.1 }));
+    const m = to_matrix(q);
+    const v = @Vector(3, f32){ 0.2, -0.7, 0.5 };
+    // Applying the matrix (as a column vector) must match rotate_vector.
+    var mv: @Vector(3, f32) = .{ 0, 0, 0 };
+    inline for (0..3) |c| {
+        mv += @Vector(3, f32){ m.items[c][0], m.items[c][1], m.items[c][2] } * @as(@Vector(3, f32), @splat(v[c]));
+    }
+    try std.testing.expect(vector.is_close(mv, rotate_vector(q, v), 1e-5));
+}
+
+test from_matrix {
+    const q = vector.normalize(from_eular_angles(@Vector(3, f32){ 0.3, -0.6, 1.1 }));
+    var back = from_matrix(to_matrix(q));
+    // q and -q are the same rotation; align signs before comparing.
+    if (vector.dot(q, back) < 0) back = -back;
+    try std.testing.expect(vector.is_close(back, q, 1e-5));
+}
+
+test to_axis_angle {
+    const axis = vector.normalize(@Vector(3, f32){ 1, 2, 3 });
+    const angle: f32 = 1.2;
+    const aa = to_axis_angle(from_rotation(axis, angle));
+    try std.testing.expectApproxEqAbs(angle, aa.angle, 1e-5);
+    try std.testing.expect(vector.is_close(aa.axis, axis, 1e-5));
+}

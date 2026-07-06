@@ -1,4 +1,4 @@
-# Zig Linear Algebra (ZLA)
+# Zig Math Library (ZML)
 
 [![CI](https://github.com/flying-swallow/zig-linear-algebra/actions/workflows/ci.yml/badge.svg)](https://github.com/flying-swallow/zig-linear-algebra/actions/workflows/ci.yml)
 
@@ -13,11 +13,11 @@ zig fetch --save "git+https://github.com/flying-swallow/zig-linear-algebra.git"
 Then in your `build.zig`:
 
 ```zig
-const zla = b.dependency("zla", .{
+const zml = b.dependency("zml", .{
     .target = target,
     .optimize = optimize,
 });
 
-exe.root_module.addImport("zla", zla.module("zla"));
+exe.root_module.addImport("zml", zml.module("zml"));
 ```
 

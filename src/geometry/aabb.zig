@@ -1,6 +1,6 @@
 const std = @import("std");
-const zla = @import("../root.zig");
-const geometry = zla.geom;
+const zml = @import("../root.zig");
+const geometry = zml.geom;
 
 pub fn AABB(comptime T: type) type {
     return struct {
@@ -34,7 +34,7 @@ pub fn AABB(comptime T: type) type {
         }
 
         pub fn get_sqr_distance_to(self: Self, point: @Vector(3, T)) T {
-            return zla.vec.norm_sqr(self.get_closest_point(point) - point);
+            return zml.vec.norm_sqr(self.get_closest_point(point) - point);
         }
 
         pub fn from_two_points(p1: @Vector(3, T), p2: @Vector(3, T)) @This() {
@@ -53,7 +53,7 @@ pub fn AABB(comptime T: type) type {
             };
         }
 
-        pub fn transform(self: Self, mat: zla.Mat(T, 4, 4)) Self {
+        pub fn transform(self: Self, mat: zml.Mat(T, 4, 4)) Self {
             const pos = mat.position();
             var new_min = pos;
             var new_max = pos;
@@ -107,7 +107,7 @@ pub fn AABB(comptime T: type) type {
         pub fn surface_area(self: Self) T {
             std.debug.assert(@reduce(.And, self.min <= self.max));
             const extent = self.max - self.min;
-            return 2 * zla.vec.dot(zla.vec.swizzle(extent, "yzz"), zla.vec.swizzle(extent, "xxy"));
+            return 2 * zml.vec.dot(zml.vec.swizzle(extent, "yzz"), zml.vec.swizzle(extent, "xxy"));
         }
 
         pub fn volume(self: Self) T {
@@ -121,11 +121,11 @@ pub fn AABB(comptime T: type) type {
 test "aabb_transform" {
     const AABBf32 = AABB(f32);
     const aabb = AABBf32.from_two_points(.{ 0.0, 0.0, 0.0 }, .{ 1.0, 1.0, 1.0 });
-    var translation: zla.Mat(f32, 4, 4) = .identity;
+    var translation: zml.Mat(f32, 4, 4) = .identity;
     translation = translation.translate(.{ 1.0, 2.0, 3.0 });
     const transformed = aabb.transform(translation);
-    try std.testing.expect(zla.vec.is_close_default(transformed.min, .{ 1.0, 2.0, 3.0 }));
-    try std.testing.expect(zla.vec.is_close_default(transformed.max, .{ 2.0, 3.0, 4.0 }));
+    try std.testing.expect(zml.vec.is_close_default(transformed.min, .{ 1.0, 2.0, 3.0 }));
+    try std.testing.expect(zml.vec.is_close_default(transformed.max, .{ 2.0, 3.0, 4.0 }));
 }
 
 test "surface_area" {
@@ -153,14 +153,14 @@ test "InvDirection" {
 test "aabb_get_support" {
     const aabb: AABB(f32) = .from_two_points(.{ 0.0, 0.0, 0.0 }, .{ 1.0, 1.0, 1.0 });
 
-    try std.testing.expect(zla.vec.is_close_default(aabb.get_support(.{ 0.5774, 0.5774, 0.5774 }), .{ 0.0, 0.0, 0.0 }));
-    try std.testing.expect(zla.vec.is_close_default(aabb.get_support(.{ 0.5774, 0.5774, -0.5774 }), .{ 0.0, 0.0, 1.0 }));
-    try std.testing.expect(zla.vec.is_close_default(aabb.get_support(.{ 0.5774, -0.5774, 0.5774 }), .{ 0.0, 1.0, 0.0 }));
-    try std.testing.expect(zla.vec.is_close_default(aabb.get_support(.{ 0.5774, -0.5774, -0.5774 }), .{ 0.0, 1.0, 1.0 }));
-    try std.testing.expect(zla.vec.is_close_default(aabb.get_support(.{ -0.5774, 0.5774, 0.5774 }), .{ 1.0, 0.0, 0.0 }));
-    try std.testing.expect(zla.vec.is_close_default(aabb.get_support(.{ -0.5774, 0.5774, -0.5774 }), .{ 1.0, 0.0, 1.0 }));
-    try std.testing.expect(zla.vec.is_close_default(aabb.get_support(.{ -0.5774, -0.5774, 0.5774 }), .{ 1.0, 1.0, 0.0 }));
-    try std.testing.expect(zla.vec.is_close_default(aabb.get_support(.{ -0.5774, -0.5774, -0.5774 }), .{ 1.0, 1.0, 1.0 }));
+    try std.testing.expect(zml.vec.is_close_default(aabb.get_support(.{ 0.5774, 0.5774, 0.5774 }), .{ 0.0, 0.0, 0.0 }));
+    try std.testing.expect(zml.vec.is_close_default(aabb.get_support(.{ 0.5774, 0.5774, -0.5774 }), .{ 0.0, 0.0, 1.0 }));
+    try std.testing.expect(zml.vec.is_close_default(aabb.get_support(.{ 0.5774, -0.5774, 0.5774 }), .{ 0.0, 1.0, 0.0 }));
+    try std.testing.expect(zml.vec.is_close_default(aabb.get_support(.{ 0.5774, -0.5774, -0.5774 }), .{ 0.0, 1.0, 1.0 }));
+    try std.testing.expect(zml.vec.is_close_default(aabb.get_support(.{ -0.5774, 0.5774, 0.5774 }), .{ 1.0, 0.0, 0.0 }));
+    try std.testing.expect(zml.vec.is_close_default(aabb.get_support(.{ -0.5774, 0.5774, -0.5774 }), .{ 1.0, 0.0, 1.0 }));
+    try std.testing.expect(zml.vec.is_close_default(aabb.get_support(.{ -0.5774, -0.5774, 0.5774 }), .{ 1.0, 1.0, 0.0 }));
+    try std.testing.expect(zml.vec.is_close_default(aabb.get_support(.{ -0.5774, -0.5774, -0.5774 }), .{ 1.0, 1.0, 1.0 }));
 }
 
 //const Plane = struct {

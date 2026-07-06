@@ -1,5 +1,5 @@
 const std = @import("std");
-const zla = @import("../root.zig");
+const zml = @import("../root.zig");
 
 pub fn aabb_contains_point(a: anytype, pt: @Vector(3, @TypeOf(a).child)) bool {
     comptime {
@@ -13,13 +13,13 @@ pub fn aabb_contains_point(a: anytype, pt: @Vector(3, @TypeOf(a).child)) bool {
 //        std.debug.assert(@TypeOf(a).primative_type == .Capsule);
 //    }
 //    const ab = a.hemisphere_centers[1] - a.hemisphere_centers[0];
-//    const t = @max(@min(zla.vec.dot(pt - a.hemisphere_centers[0], ab) / zla.vec.dot(ab, ab), @as(@TypeOf(a).child, 1)), @as(@TypeOf(a).child, 0));
+//    const t = @max(@min(zml.vec.dot(pt - a.hemisphere_centers[0], ab) / zml.vec.dot(ab, ab), @as(@TypeOf(a).child, 1)), @as(@TypeOf(a).child, 0));
 //    const closest_point = a.hemisphere_centers[0] + ab * @as(@Vector(3, @TypeOf(a).child), t);
-//    return zla.vec.distance_sqr(pt, closest_point) <= a.radius * a.radius;
+//    return zml.vec.distance_sqr(pt, closest_point) <= a.radius * a.radius;
 //} 
 
 test aabb_contains_point {
-    const aabb: zla.geom.AABB(f32) = .from_two_points(.{ -1, -1, -1 }, .{ 1, 1, 1 });
+    const aabb: zml.geom.AABB(f32) = .from_two_points(.{ -1, -1, -1 }, .{ 1, 1, 1 });
     try std.testing.expect(aabb_contains_point(aabb, .{ 0, 0, 0 }));
     try std.testing.expect(!aabb_contains_point(aabb, .{ 2, 0, 0 }));
     try std.testing.expect(!aabb_contains_point(aabb, .{ 0, -2, 0 }));
@@ -27,7 +27,7 @@ test aabb_contains_point {
 }
 
 //test capsule_contains_point {
-//    const capsule: zla.geom.Capsule(f32) = .{
+//    const capsule: zml.geom.Capsule(f32) = .{
 //        .hemisphere_centers = .{ .{ 0, 0, -1 }, .{ 0, 0, 1 } },
 //        .radius = 1,
 //    };

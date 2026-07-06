@@ -7,6 +7,14 @@ pub const Primative = enum {
     Sphere,
     OrientedBox,
     Capsule,
+    Frustum,
+};
+
+/// Result of testing a primitive against a bounding volume such as a frustum.
+pub const IntersectionState = enum {
+    outside,
+    inside,
+    partial,
 };
 
 pub const AABB = @import("geometry/aabb.zig").AABB;
@@ -20,6 +28,9 @@ pub const Planef64 = Plane(f64);
 pub const Sphere = @import("geometry/sphere.zig").Sphere;
 pub const Capsule = @import("geometry/capsule.zig").Capsule;
 pub const OrientedBoundedBox = @import("geometry/obb.zig").OrientedBoundedBox;
+pub const Frustum = @import("geometry/frustum.zig").Frustum;
+pub const Frustumf32 = Frustum(f32);
+pub const Frustumf64 = Frustum(f64);
 
 
 
@@ -33,6 +44,7 @@ test {
     _ = @import("geometry/sphere.zig");
     _ = @import("geometry/capsule.zig");
     _ = @import("geometry/obb.zig");
+    _ = @import("geometry/frustum.zig");
     _ = @import("geometry/overlap.zig");
     _ = @import("geometry/ray.zig");
     _ = @import("geometry/contains.zig");

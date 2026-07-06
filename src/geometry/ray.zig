@@ -1,5 +1,5 @@
 const std = @import("std");
-const zla = @import("../root.zig");
+const zml = @import("../root.zig");
 
 pub fn InvDirection(comptime T: type) type {
     return struct {
@@ -21,16 +21,16 @@ pub fn InvDirection(comptime T: type) type {
 //    }
 //
 //    const orgin_xz = @select(@TypeOf(cylinder).child, .{ true, false, true }, origin, @as(@Vector(3, @TypeOf(cylinder).child), @splat(0)));
-//    const origin_xz_len_sq = zla.vec.norm_sqr(orgin_xz);
+//    const origin_xz_len_sq = zml.vec.norm_sqr(orgin_xz);
 //    const r_sq = cylinder.radius * cylinder.radius;
 //    if (origin_xz_len_sq > r_sq) {
 //        // Ray starts outside the infinite cylinder
 //        // Solve: |RayOrigin_xz + fraction * RayDirection_xz|^2 = r^2 to find fraction
 //        const direction_xz = @select(@TypeOf(cylinder).child, .{ true, false, true }, direction, @as(@Vector(3, @TypeOf(cylinder).child), @splat(0)));
-//        const a = zla.vec.norm_sqr(direction_xz);
-//        const b = 2 * zla.vec.dot(orgin_xz, direction_xz);
+//        const a = zml.vec.norm_sqr(direction_xz);
+//        const b = 2 * zml.vec.dot(orgin_xz, direction_xz);
 //        const c = origin_xz_len_sq - r_sq;
-//        const root_terms = zla.find_roots(@TypeOf(cylinder).child, a, b, c);
+//        const root_terms = zml.find_roots(@TypeOf(cylinder).child, a, b, c);
 //        if (root_terms.num_roots == 0) {
 //            return std.math.floatMax(@TypeOf(cylinder).child);
 //        }
@@ -149,10 +149,10 @@ pub fn ray_triangle(comptime T: type, origin: @Vector(3, T), direction: @Vector(
     const e2 = v2 - v0;
 
     // Begin calculating determinant - also used to calculate u parameter
-    const p = zla.vec.cross(direction, e2);
+    const p = zml.vec.cross(direction, e2);
 
     // If determinant is near zero, ray lies in plane of triangle
-    var det = @as(@Vector(3, T), @splat(zla.vec.dot(e1, p)));
+    var det = @as(@Vector(3, T), @splat(zml.vec.dot(e1, p)));
 
     // Check if determinant is near zero
     const det_near_zero = @abs(det) < epsilon;
@@ -164,16 +164,16 @@ pub fn ray_triangle(comptime T: type, origin: @Vector(3, T), direction: @Vector(
     const s = origin - v0;
 
     // Calculate u parameter and test bounds
-    const u = @as(@Vector(3, T), @splat(zla.vec.dot(s, p))) / det;
+    const u = @as(@Vector(3, T), @splat(zml.vec.dot(s, p))) / det;
 
     // Prepare to test v parameter
-    const q = zla.vec.cross(s, e1);
+    const q = zml.vec.cross(s, e1);
 
     // Calculate v parameter and test bounds
-    const v = @as(@Vector(3, T), @splat(zla.vec.dot(direction, q))) / det;
+    const v = @as(@Vector(3, T), @splat(zml.vec.dot(direction, q))) / det;
 
     // get intersection point
-    const t = @as(@Vector(3, T), @splat(zla.vec.dot(e2, q))) / det;
+    const t = @as(@Vector(3, T), @splat(zml.vec.dot(e2, q))) / det;
 
     const no_intersection =
         (det_near_zero | (u < zero)) | ((v < zero) | ((u + v) > one)) | (t < zero);
@@ -182,7 +182,7 @@ pub fn ray_triangle(comptime T: type, origin: @Vector(3, T), direction: @Vector(
 }
 
 test ray_aabb {
-    const aabb: zla.geom.AABB(f32) = .from_two_points(.{ -1, -1, -1 }, .{ 1, 1, 1 });
+    const aabb: zml.geom.AABB(f32) = .from_two_points(.{ -1, -1, -1 }, .{ 1, 1, 1 });
     inline for (0..3) |axis| {
         {
             // Ray starting in the center of the box, pointing high
@@ -231,7 +231,7 @@ test ray_triangle {
 }
 
 //test ray_cylinder {
-//    const cylinder: zla.geom.Cylinder(f32) = .from_two_points_radius(.{ 0, 0, 0 }, .{ 0, 0, 2 }, 1.0);
+//    const cylinder: zml.geom.Cylinder(f32) = .from_two_points_radius(.{ 0, 0, 0 }, .{ 0, 0, 2 }, 1.0);
 //    {
 //        // Ray starting outside the cylinder, pointing towards
 //        const origin = @Vector(3, f32){ 2, 0, 1 };

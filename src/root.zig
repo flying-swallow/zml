@@ -23,12 +23,22 @@ pub const Mat3f32 = Mat(f32, 3, 3);
 pub const Mat3f64 = Mat(f64, 3, 3);
 
 pub const geom = @import("geometry.zig");
+pub const meta = @import("meta.zig");
+pub const scalar = @import("scalar.zig");
+pub const packing = @import("packing.zig");
+pub const color = @import("color.zig");
+pub const random = @import("random.zig");
 
 test {
     _ = @import("vector.zig");
     _ = @import("matrix.zig");
     _ = @import("quat.zig");
     _ = @import("geometry.zig");
+    _ = @import("meta.zig");
+    _ = @import("scalar.zig");
+    _ = @import("packing.zig");
+    _ = @import("color.zig");
+    _ = @import("random.zig");
 }
 
 pub fn to_radians(degrees: anytype) @TypeOf(degrees) {
