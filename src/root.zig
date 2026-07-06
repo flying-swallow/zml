@@ -24,6 +24,7 @@ pub const Mat3f64 = Mat(f64, 3, 3);
 
 pub const geom = @import("geometry.zig");
 pub const meta = @import("meta.zig");
+pub const simd = @import("simd.zig");
 pub const scalar = @import("scalar.zig");
 pub const packing = @import("packing.zig");
 pub const color = @import("color.zig");
@@ -35,6 +36,7 @@ test {
     _ = @import("quat.zig");
     _ = @import("geometry.zig");
     _ = @import("meta.zig");
+    _ = @import("simd.zig");
     _ = @import("scalar.zig");
     _ = @import("packing.zig");
     _ = @import("color.zig");

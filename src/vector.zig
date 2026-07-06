@@ -8,6 +8,7 @@ const Float = std.meta.Float;
 const Mat = @import("matrix.zig").Mat;
 const testing = @import("testing.zig");
 const meta = @import("meta.zig");
+const simd = @import("simd.zig");
 
 pub const Vec4f32 = @Vector(4, f32);
 pub const Vec3f32 = @Vector(3, f32);
@@ -77,6 +78,13 @@ pub fn swizzle(vec: anytype, comptime components: []const u8) meta.Reshape(@Type
 
 pub fn norm_sqr_adv(vec: anytype, comptime precision: u8) Float(precision) {
     const T = meta.Child(@TypeOf(vec));
+    // Array inputs are processed in native-width SIMD chunks (see simd.zig) so a
+    // large array never materializes one huge @Vector.
+    if (@typeInfo(@TypeOf(vec)) == .array) {
+        if (@typeInfo(T) == .int) return @floatFromInt(simd.sumSquares(T, vec));
+        const C = if (precision > @bitSizeOf(T)) Float(precision) else T;
+        return @floatCast(simd.sumSquares(C, vec));
+    }
     const v: meta.AsVector(@TypeOf(vec)) = vec;
     if (@typeInfo(T) == .int) {
         return @as(
@@ -112,6 +120,12 @@ pub inline fn norm_sqr(vec: anytype) Float(@bitSizeOf(meta.Child(@TypeOf(vec))))
 /// the precision of the calculations will match the precision of the output type.
 pub fn norm_adv(vec: anytype, comptime precision: u8) Float(precision) {
     const T = meta.Child(@TypeOf(vec));
+    if (@typeInfo(@TypeOf(vec)) == .array) {
+        if (@typeInfo(T) == .int)
+            return std.math.sqrt(@as(Float(precision), @floatFromInt(simd.sumSquares(T, vec))));
+        const C = if (precision > @bitSizeOf(T)) Float(precision) else T;
+        return @floatCast(std.math.sqrt(simd.sumSquares(C, vec)));
+    }
     const v: meta.AsVector(@TypeOf(vec)) = vec;
     if (@typeInfo(T) == .int) {
         return std.math.sqrt(
@@ -151,6 +165,18 @@ pub inline fn norm(vec: anytype) Float(@bitSizeOf(meta.Child(@TypeOf(vec)))) {
 /// Returns a new vector with the same direction as the original vector, but with a norm closest to 1.
 pub fn normalize(vec: anytype) @TypeOf(vec) {
     const T = meta.Child(@TypeOf(vec));
+    if (@typeInfo(@TypeOf(vec)) == .array) {
+        const self_norm = switch (@typeInfo(T)) {
+            .float => norm(vec),
+            .int => @as(T, @intFromFloat(norm(vec))),
+            else => unreachable,
+        };
+        return simd.mapUnary(vec, self_norm, struct {
+            fn op(c: anytype, d: T) @TypeOf(c) {
+                return c / @as(@TypeOf(c), @splat(d));
+            }
+        }.op);
+    }
     const v: meta.AsVector(@TypeOf(vec)) = vec;
     const self_norm = switch (@typeInfo(T)) {
         .float => norm(v),
@@ -165,6 +191,8 @@ pub fn normalize(vec: anytype) @TypeOf(vec) {
 
 /// dot product of two vectors.
 pub fn dot(vec: anytype, other: @TypeOf(vec)) meta.Child(@TypeOf(vec)) {
+    if (@typeInfo(@TypeOf(vec)) == .array)
+        return simd.sumProducts(meta.Child(@TypeOf(vec)), vec, other);
     const a: meta.AsVector(@TypeOf(vec)) = vec;
     const b: meta.AsVector(@TypeOf(vec)) = other;
     return @reduce(.Add, a * b);
@@ -206,6 +234,8 @@ pub fn cross(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
 /// the precsion parameter is the number of bits of the Vector type T.
 /// the precision of the calculations will match the precision of the output type.
 pub fn distance_adv(a: anytype, b: @TypeOf(a), comptime precision: u8) Float(precision) {
+    if (@typeInfo(@TypeOf(a)) == .array)
+        return norm_adv(simd.sub(a, b), precision); // sub -> [N]T, norm_adv chunks it
     const av: meta.AsVector(@TypeOf(a)) = a;
     const bv: meta.AsVector(@TypeOf(a)) = b;
     return norm_adv(av - bv, precision);
@@ -234,6 +264,17 @@ pub inline fn angle(a: anytype, b: @TypeOf(a)) meta.Child(@TypeOf(a)) {
 
 /// Returns a new vector that is the reflection of the original vector on the given normal.
 pub fn reflect(vec: anytype, normal: @TypeOf(vec)) @TypeOf(vec) {
+    const T = meta.Child(@TypeOf(vec));
+    if (@typeInfo(@TypeOf(vec)) == .array) {
+        const dp = dot(vec, normal); // chunked dot
+        return simd.mapBinary(vec, normal, dp, struct {
+            fn op(cv: anytype, cn: anytype, d: T) @TypeOf(cv) {
+                const two: @TypeOf(cv) = @splat(2);
+                const dd: @TypeOf(cv) = @splat(d);
+                return cv - cn * two * dd;
+            }
+        }.op);
+    }
     const V = meta.AsVector(@TypeOf(vec));
     const v: V = vec;
     const n: V = normal;
@@ -243,95 +284,26 @@ pub fn reflect(vec: anytype, normal: @TypeOf(vec)) @TypeOf(vec) {
         @as(V, @splat(dot_product)));
 }
 
+/// Simultaneously computes the sine and cosine of each component.
+/// The cephes-derived core lives in `simd.sinCosVec`; array inputs are processed
+/// in native-width SIMD chunks via `simd.sinCos`, `@Vector` inputs in one op.
 pub fn sin_cos(input: anytype) struct { sin_out: @TypeOf(input), cos_out: @TypeOf(input) } {
-    const C = meta.Child(@TypeOf(input));
-    const FVec = meta.AsVector(@TypeOf(input));
-    const in: FVec = input;
-    const UVec = @Vector(meta.lengthOf(@TypeOf(input)), switch (@typeInfo(C)) {
-        .float => |v| switch (v.bits) {
-            32 => u32,
-            64 => u64,
-            else => @compileError("Unsupported float size"),
-        },
-        else => @compileError("sin_cos only supports floating point vectors"),
-    });
-    const last_bit = switch (@typeInfo(C)) {
-        .float => |v| switch (v.bits) {
-            32 => 0x80000000,
-            64 => 0x8000000000000000,
-            else => @compileError("Unsupported float size"),
-        },
-        else => @compileError("sin_cos only supports floating point vectors"),
-    };
-
-    // Apply sign changes based on quadrant
-    const num_bits = switch (@typeInfo(C)) {
-        .float => |v| v.bits,
-        else => @compileError("sin_cos only supports floating point vectors"),
-    };
-
-    // Implementation based on sinf.c from the cephes library, combines sinf and cosf in a single function, changes octants to quadrants and vectorizes it
-    // Original implementation by Stephen L. Moshier (See: http://www.moshier.net/)
-
-    // Make argument positive and remember sign for sin only since cos is symmetric around x (highest bit of a float is the sign bit)
-    var sin_sign = @as(UVec, @bitCast(in)) & @as(UVec, @splat(last_bit));
-    var x: FVec = @bitCast(@as(UVec, @bitCast(in)) ^ sin_sign);
-
-    // x / (PI / 2) rounded to nearest int gives us the quadrant closest to x
-    const quadrant: UVec = @intFromFloat(@as(FVec, @splat(0.6366197723675814)) * x + @as(FVec, @splat(0.5)));
-    const float_quadrant: FVec = @floatFromInt(quadrant);
-
-    // Make x relative to the closest quadrant.
-    // This does x = x - quadrant * PI / 2 using a two step Cody-Waite argument reduction.
-    // This improves the accuracy of the result by avoiding loss of significant bits in the subtraction.
-    // We start with x = x - quadrant * PI / 2, PI / 2 in hexadecimal notation is 0x3fc90fdb, we remove the lowest 16 bits to
-    // get 0x3fc90000 (= 1.5703125) this means we can now multiply with a number of up to 2^16 without losing any bits.
-    // This leaves us with: x = (x - quadrant * 1.5703125) - quadrant * (PI / 2 - 1.5703125).
-    // PI / 2 - 1.5703125 in hexadecimal is 0x39fdaa22, stripping the lowest 12 bits we get 0x39fda000 (= 0.0004837512969970703125)
-    // This leaves uw with: x = ((x - quadrant * 1.5703125) - quadrant * 0.0004837512969970703125) - quadrant * (PI / 2 - 1.5703125 - 0.0004837512969970703125)
-    // See: https://stackoverflow.com/questions/42455143/sine-cosine-modular-extended-precision-arithmetic
-    // After this we have x in the range [-PI / 4, PI / 4].
-    x = ((x - float_quadrant * @as(FVec, @splat(1.5703125))) - float_quadrant * @as(FVec, @splat(0.0004837512969970703125))) - float_quadrant * @as(FVec, @splat(7.549789948768648e-8));
-
-    //Calculate x2 = x^2
-    const x2 = x * x;
-
-    // Taylor expansion:
-    // Cos(x) = 1 - x^2/2! + x^4/4! - x^6/6! + x^8/8! + ... = (((x2/8!- 1/6!) * x2 + 1/4!) * x2 - 1/2!) * x2 + 1
-    const taylor_cos = ((@as(FVec, @splat(2.443315711809948e-5)) * x2 - @as(FVec, @splat(1.388731625493765e-3))) * x2 + @as(FVec, @splat(4.166664568298827e-2))) * x2 * x2 - @as(FVec, @splat(0.5)) * x2 + @as(FVec, @splat(1.0));
-    // Sin(x) = x - x^3/3! + x^5/5! - x^7/7! + ... = ((-x2/7! + 1/5!) * x2 - 1/3!) * x2 * x + x
-    const taylor_sin = ((@as(FVec, @splat(-1.9515295891e-4)) * x2 + @as(FVec, @splat(8.3321608736e-3))) * x2 - @as(FVec, @splat(1.6666654611e-1))) * x2 * x + x;
-
-    // The lowest 2 bits of quadrant indicate the quadrant that we are in.
-    // Let x be the original input value and x' our value that has been mapped to the range [-PI / 4, PI / 4].
-    // since cos(x) = sin(x - PI / 2) and since we want to use the Taylor expansion as close as possible to 0,
-    // we can alternate between using the Taylor expansion for sin and cos according to the following table:
-    //
-    // quadrant  sin(x)      cos(x)
-    // XXX00b    sin(x')    cos(x')
-    // XXX01b   cos(x')    -sin(x')
-    // XXX10b   -sin(x')    -cos(x')
-    // XXX11b   -cos(x')    sin(x')
-    //
-    // Extract the lowest 2 bits of quadrant to determine which Taylor expansion to use and signs
-    const bit1: UVec = quadrant << @as(UVec, @splat(num_bits - 1)); // bit 0
-    const bit2: UVec = (quadrant << @as(UVec, @splat(num_bits - 2))) & @as(UVec, @splat(last_bit)); // bit 1
-
-    // Select which one of the results is sin and which one is cos based on bit1
-    const s = @select(C, bit1 > @as(UVec, @splat(0)), taylor_cos, taylor_sin);
-    const c = @select(C, bit1 > @as(UVec, @splat(0)), taylor_sin, taylor_cos);
-
-    sin_sign = sin_sign ^ bit2;
-    const cos_sign = bit1 ^ bit2;
-
-    return .{
-        .sin_out = @as(FVec, @bitCast(@as(UVec, @bitCast(s)) ^ sin_sign)),
-        .cos_out = @as(FVec, @bitCast(@as(UVec, @bitCast(c)) ^ cos_sign)),
-    };
+    if (@typeInfo(@TypeOf(input)) == .array) {
+        const r = simd.sinCos(input);
+        return .{ .sin_out = r.sin, .cos_out = r.cos };
+    }
+    const r = simd.sinCosVec(input); // input is a @Vector -> width == its len
+    return .{ .sin_out = r.sin, .cos_out = r.cos };
 }
 
 /// Returns a new vector with a direction closest to the original vector, but with a magnitude scaled by the given value.
 pub inline fn scale(a: anytype, value: meta.Child(@TypeOf(a))) @TypeOf(a) {
+    if (@typeInfo(@TypeOf(a)) == .array)
+        return simd.mapUnary(a, value, struct {
+            fn op(c: anytype, s: meta.Child(@TypeOf(a))) @TypeOf(c) {
+                return c * @as(@TypeOf(c), @splat(s));
+            }
+        }.op);
     const V = meta.AsVector(@TypeOf(a));
     const v: V = a;
     return v * @as(V, @splat(value));
@@ -342,6 +314,8 @@ pub fn is_close_default(a: anytype, b: @TypeOf(a)) bool {
 }
 
 pub fn is_close(a: anytype, b: @TypeOf(a), max_distance_sqr: Float(@bitSizeOf(meta.Child(@TypeOf(a))))) bool {
+    if (@typeInfo(@TypeOf(a)) == .array)
+        return norm_sqr(simd.sub(a, b)) <= max_distance_sqr;
     const av: meta.AsVector(@TypeOf(a)) = a;
     const bv: meta.AsVector(@TypeOf(a)) = b;
     return norm_sqr(av - bv) <= max_distance_sqr;
@@ -655,5 +629,88 @@ test "array inputs are accepted and preserve shape" {
         try std.testing.expect(@TypeOf(res.sin_out) == [2]f32);
         try testing.expect_is_close(@as(@Vector(2, f32), res.cos_out), @Vector(2, f32){ 1, 0 }, 0.0001);
         try testing.expect_is_close(@as(@Vector(2, f32), res.sin_out), @Vector(2, f32){ 0, 1.0 }, 0.0001);
+    }
+}
+
+test "chunked array path matches single-@Vector path" {
+    @setEvalBranchQuota(10000);
+    // For each length (incl. remainder-forcing and the motivating 245), the
+    // chunked array kernels must agree with the single-op @Vector path on the
+    // same data. Pure element-wise ops (scale, sin_cos) must match exactly;
+    // reductions and reduction-dependent maps agree to within float reordering.
+    // Inner fill/compare loops are RUNTIME `for` (not `inline`) so the unrolled
+    // outer length loop doesn't blow the comptime branch quota.
+    const lengths = [_]comptime_int{ 3, 8, 16, 17, 64, 65, 77, 245 };
+    inline for (lengths) |N| {
+        // Strictly-positive, moderate f32 data so reduction magnitudes stay nonzero.
+        var a: [N]f32 = undefined;
+        var b: [N]f32 = undefined;
+        for (0..N) |i| {
+            a[i] = @as(f32, @floatFromInt((i % 13) + 1)) * 0.5; // 0.5 .. 6.5
+            b[i] = @as(f32, @floatFromInt((i % 7) + 1)) * 0.25; // 0.25 .. 1.75
+        }
+        const va: @Vector(N, f32) = a;
+        const vb: @Vector(N, f32) = b;
+
+        // Reductions -> scalar: relative tolerance absorbs the sum reordering.
+        try std.testing.expectApproxEqRel(norm_sqr(va), norm_sqr(a), 1e-4);
+        try std.testing.expectApproxEqRel(norm(va), norm(a), 1e-4);
+        try std.testing.expectApproxEqRel(dot(va, vb), dot(a, b), 1e-4);
+        try std.testing.expectApproxEqRel(distance(va, vb), distance(a, b), 1e-4);
+
+        // scale: pure per-lane multiply -> bit-identical.
+        try std.testing.expectEqual(@as([N]f32, scale(va, 2.0)), scale(a, 2.0));
+
+        // sin_cos: pure per-lane transcendental -> bit-identical.
+        const sc_v = sin_cos(va);
+        const sc_a = sin_cos(a);
+        try std.testing.expectEqual(@as([N]f32, sc_v.sin_out), sc_a.sin_out);
+        try std.testing.expectEqual(@as([N]f32, sc_v.cos_out), sc_a.cos_out);
+
+        // normalize: components are O(1/sqrt(N)); only the norm scalar reorders.
+        const nz_v: [N]f32 = normalize(va);
+        const nz_a = normalize(a);
+        for (0..N) |i| try std.testing.expectApproxEqAbs(nz_v[i], nz_a[i], 1e-4);
+
+        // reflect about a UNIT normal keeps magnitudes O(input) so an abs tol works.
+        const unit_v: [N]f32 = normalize(vb);
+        const unit_a = normalize(b);
+        const rf_v: [N]f32 = reflect(va, @as(@Vector(N, f32), unit_v));
+        const rf_a = reflect(a, unit_a);
+        for (0..N) |i| try std.testing.expectApproxEqAbs(rf_v[i], rf_a[i], 1e-3);
+
+        // is_close over arrays agrees with the vector path.
+        try std.testing.expectEqual(is_close(va, vb, 1000.0), is_close(a, b, 1000.0));
+    }
+
+    // Integer reductions/maps are exact (integer add is associative mod 2^bits).
+    inline for (.{ 3, 17, 64, 245 }) |N| {
+        var ai: [N]i32 = undefined;
+        var bi: [N]i32 = undefined;
+        for (0..N) |i| {
+            ai[i] = @intCast((i % 5) + 1);
+            bi[i] = @intCast((i % 3) + 1);
+        }
+        const vai: @Vector(N, i32) = ai;
+        const vbi: @Vector(N, i32) = bi;
+        try std.testing.expectEqual(norm_sqr(vai), norm_sqr(ai));
+        try std.testing.expectEqual(dot(vai, vbi), dot(ai, bi));
+        try std.testing.expectEqual(@as([N]i32, normalize(vai)), normalize(ai));
+    }
+
+    // f16 with precision-64 widening: both paths accumulate in f64, so they match.
+    inline for (.{ 17, 64 }) |N| {
+        var af: [N]f16 = undefined;
+        for (0..N) |i| af[i] = @floatFromInt((i % 4) + 1);
+        const vaf: @Vector(N, f16) = af;
+        try std.testing.expectApproxEqRel(norm_adv(vaf, 64), norm_adv(af, 64), 1e-6);
+    }
+
+    // f64 reductions.
+    inline for (.{ 64, 245 }) |N| {
+        var ad: [N]f64 = undefined;
+        for (0..N) |i| ad[i] = @as(f64, @floatFromInt((i % 11) + 1)) * 0.3;
+        const vad: @Vector(N, f64) = ad;
+        try std.testing.expectApproxEqRel(norm(vad), norm(ad), 1e-12);
     }
 }
