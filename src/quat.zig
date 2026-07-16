@@ -171,15 +171,15 @@ pub fn to_matrix(q: anytype) zml.Mat(std.meta.Child(@TypeOf(q)), 4, 4) {
 
 /// Extract a quaternion from the rotation part of a matrix (Shepperd's method).
 pub fn from_matrix(m: anytype) @Vector(4, @TypeOf(m).Type) {
-    // element(row, col) is stored column-major as items[col][row]
+    // element(row, col) is stored row-major as items[row][col]
     const m00 = m.items[0][0];
-    const m01 = m.items[1][0];
-    const m02 = m.items[2][0];
-    const m10 = m.items[0][1];
+    const m01 = m.items[0][1];
+    const m02 = m.items[0][2];
+    const m10 = m.items[1][0];
     const m11 = m.items[1][1];
-    const m12 = m.items[2][1];
-    const m20 = m.items[0][2];
-    const m21 = m.items[1][2];
+    const m12 = m.items[1][2];
+    const m20 = m.items[2][0];
+    const m21 = m.items[2][1];
     const m22 = m.items[2][2];
     const trace = m00 + m11 + m22;
     if (trace > 0) {
@@ -367,7 +367,8 @@ test to_matrix {
     // Applying the matrix (as a column vector) must match rotate_vector.
     var mv: @Vector(3, f32) = .{ 0, 0, 0 };
     inline for (0..3) |c| {
-        mv += @Vector(3, f32){ m.items[c][0], m.items[c][1], m.items[c][2] } * @as(@Vector(3, f32), @splat(v[c]));
+        // column c of the (row-major) matrix, first three components
+        mv += @Vector(3, f32){ m.items[0][c], m.items[1][c], m.items[2][c] } * @as(@Vector(3, f32), @splat(v[c]));
     }
     try std.testing.expect(vector.is_close(mv, rotate_vector(q, v), 1e-5));
 }
@@ -378,6 +379,22 @@ test from_matrix {
     // q and -q are the same rotation; align signs before comparing.
     if (vector.dot(q, back) < 0) back = -back;
     try std.testing.expect(vector.is_close(back, q, 1e-5));
+}
+
+// The round-trip above only pins `from_matrix` transitively through `to_matrix`; a storage
+// convention change that transposed both consistently would leave it green. This pins
+// `from_matrix`'s storage reads against an explicitly laid-out, asymmetric rotation matrix.
+test "from_matrix known rotation" {
+    // 90° about +z (column-vector, active), written row by row: sends +x -> +y, +y -> -x.
+    const m: zml.Mat(f32, 4, 4) = .from_rows(.{
+        .{ 0, -1, 0, 0 },
+        .{ 1, 0, 0, 0 },
+        .{ 0, 0, 1, 0 },
+        .{ 0, 0, 0, 1 },
+    });
+    const q = from_matrix(m);
+    try std.testing.expect(vector.is_close(rotate_vector(q, .{ 1, 0, 0 }), .{ 0, 1, 0 }, 1e-5));
+    try std.testing.expect(vector.is_close(rotate_vector(q, .{ 0, 1, 0 }), .{ -1, 0, 0 }, 1e-5));
 }
 
 test to_axis_angle {

@@ -22,6 +22,12 @@ pub const Mat4f64 = matrix.Mat4f64;
 pub const Mat3f32 = Mat(f32, 3, 3);
 pub const Mat3f64 = Mat(f64, 3, 3);
 
+// Affine transform matrices with the implicit last row elided: an N x (N+1) matrix that
+// represents an (N+1) x (N+1) transform. Row-major, so byte-compatible with a compact GPU
+// transform (translation in each row's last element).
+pub const Mat2x3f32 = Mat(f32, 2, 3);
+pub const Mat3x4f32 = Mat(f32, 3, 4);
+
 pub const geom = @import("geometry.zig");
 pub const meta = @import("meta.zig");
 pub const simd = @import("simd.zig");
@@ -29,6 +35,12 @@ pub const scalar = @import("scalar.zig");
 pub const packing = @import("packing.zig");
 pub const color = @import("color.zig");
 pub const random = @import("random.zig");
+pub const testing = @import("testing.zig");
+pub const approx = @import("approx.zig");
+pub const bivec = @import("bivec.zig");
+pub const rotor = @import("rotor.zig");
+pub const affine = @import("affine.zig");
+pub const spring = @import("spring.zig");
 
 test {
     _ = @import("vector.zig");
@@ -41,7 +53,16 @@ test {
     _ = @import("packing.zig");
     _ = @import("color.zig");
     _ = @import("random.zig");
+    _ = @import("testing.zig");
+    _ = @import("approx.zig");
+    _ = @import("bivec.zig");
+    _ = @import("rotor.zig");
+    _ = @import("affine.zig");
+    _ = @import("spring.zig");
 }
+
+// NOTE: bivec/rotor/affine/spring are being ported incrementally; each must exist for this file
+// to compile. They are created in dependency order (bivec -> rotor -> affine, spring).
 
 pub fn to_radians(degrees: anytype) @TypeOf(degrees) {
     return degrees * (std.math.pi / 180);

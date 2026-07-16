@@ -4,8 +4,10 @@ const vec = @import("./root.zig").vec;
 pub const Mat4f32 = Mat(f32, 4, 4);
 pub const Mat4f64 = Mat(f64, 4, 4);
 
-/// column major generic matrix type
-pub fn Mat(comptime T: type, comptime cols_: usize, comptime rows_: usize) type {
+/// Row-major generic matrix type. `Mat(T, rows, cols)` stores `items: [rows][cols]T`, so
+/// `items[r]` is row r and `items[r][c]` is the element at row r, column c. The mathematical
+/// convention is column-vector (`M * v`); only the storage is row-major.
+pub fn Mat(comptime T: type, comptime rows_: usize, comptime cols_: usize) type {
     return extern struct {
         const Self = @This();
         pub const rows: comptime_int = rows_;
@@ -13,23 +15,29 @@ pub fn Mat(comptime T: type, comptime cols_: usize, comptime rows_: usize) type 
         pub const Type: type = T;
         pub const is_square: bool = rows == cols;
 
-        items: [cols][rows]T,
+        items: [rows][cols]T,
 
-        pub inline fn from_column_major_array(values: [cols][rows]T) Self {
+        /// Build from an array of rows. Row-major storage, so this is a direct copy.
+        pub inline fn from_rows(values: [rows][cols]T) Self {
             return .{ .items = values };
         }
 
-        /// performs a transpose operation, usefull for more human readable mat literals
-        pub inline fn from_row_major_array(values: [rows][cols]T) Self {
-            return Mat(T, rows, cols).from_column_major_array(values).transpose();
+        /// Build from an array of columns; transposes into row-major storage.
+        pub inline fn from_cols(values: [cols][rows]T) Self {
+            var result: Self = undefined;
+            inline for (0..cols) |c| {
+                inline for (0..rows) |r| {
+                    result.items[r][c] = values[c][r];
+                }
+            }
+            return result;
         }
 
-        // generated code seams fast but tbd
-        pub fn transpose(self: Self) Mat(T, rows, cols) {
-            var result: Mat(T, rows, cols) = .from_column_major_array(undefined);
-            for (0..cols) |c| {
-                for (0..rows) |r| {
-                    result.items[r][c] = self.items[c][r];
+        pub fn transpose(self: Self) Mat(T, cols, rows) {
+            var result: Mat(T, cols, rows) = undefined;
+            for (0..cols) |i| {
+                for (0..rows) |j| {
+                    result.items[i][j] = self.items[j][i];
                 }
             }
             return result;
@@ -37,26 +45,28 @@ pub fn Mat(comptime T: type, comptime cols_: usize, comptime rows_: usize) type 
 
         /// Scalar multiplication
         pub fn scalar_mul(self: Self, scalar: T) Self {
-            const items: [rows * cols]T = @bitCast(self.items);
+            const flat: [rows * cols]T = @bitCast(self.items);
             var result_items: [rows * cols]T = undefined;
-            for (&result_items, items) |*result_item, item| {
+            for (&result_items, flat) |*result_item, item| {
                 result_item.* = item * scalar;
             }
-            return .from_column_major_array(@bitCast(result_items));
+            return .{ .items = @bitCast(result_items) };
         }
 
-        // `other` must be a matrix with the same number of rows as the numbers of columns of `self`
-        pub fn mul(self: Self, other: anytype) Mat(T, @TypeOf(other).cols, Self.rows) {
+        // `other` must be a matrix with as many rows as `self` has columns.
+        pub fn mul(self: Self, other: anytype) Mat(T, Self.rows, @TypeOf(other).cols) {
             comptime {
                 std.debug.assert(Self.cols == @TypeOf(other).rows);
                 std.debug.assert(Self.Type == @TypeOf(other).Type);
             }
-            const Wt = @Vector(rows, T);
-            var result: Mat(T, @TypeOf(other).cols, Self.rows) = undefined;
-            for (0..@TypeOf(result).cols) |i| {
-                result.items[i] = @as(Wt, self.items[0]) * @as(Wt, @splat(other.items[i][0]));
-                for (1..Self.cols) |j| {
-                    result.items[i] = @as(Wt, result.items[i]) + @as(Wt, self.items[j]) * @as(Wt, @splat(other.items[i][j]));
+            // Result row i = sum_k self[i][k] * (row k of other). Rows are contiguous, so each
+            // result row is one SIMD accumulation over the rows of `other`.
+            const Wt = @Vector(@TypeOf(other).cols, T);
+            var result: Mat(T, Self.rows, @TypeOf(other).cols) = undefined;
+            for (0..Self.rows) |i| {
+                result.items[i] = @as(Wt, @splat(self.items[i][0])) * @as(Wt, other.items[0]);
+                for (1..Self.cols) |k| {
+                    result.items[i] = @as(Wt, result.items[i]) + @as(Wt, @splat(self.items[i][k])) * @as(Wt, other.items[k]);
                 }
             }
             return result;
@@ -64,9 +74,9 @@ pub fn Mat(comptime T: type, comptime cols_: usize, comptime rows_: usize) type 
 
         pub fn add(self: Self, other: Self) Self {
             var result = Self{ .items = undefined };
-            for (0..cols) |c| {
-                for (0..rows) |r| {
-                    result.items[c][r] = self.items[c][r] + other.items[c][r];
+            for (0..rows) |r| {
+                for (0..cols) |c| {
+                    result.items[r][c] = self.items[r][c] + other.items[r][c];
                 }
             }
             return result;
@@ -79,7 +89,7 @@ pub fn Mat(comptime T: type, comptime cols_: usize, comptime rows_: usize) type 
             }
             var result = self;
             for (0..@typeInfo(@TypeOf(v)).vector.len) |i| {
-                result.items[i][index] = v[i];
+                result.items[index][i] = v[i];
             }
             return result;
         }
@@ -92,29 +102,29 @@ pub fn Mat(comptime T: type, comptime cols_: usize, comptime rows_: usize) type 
 
             var result = self;
             for (0..@typeInfo(@TypeOf(v)).vector.len) |i| {
-                result.items[index][i] = v[i];
+                result.items[i][index] = v[i];
             }
             return result;
         }
 
         pub inline fn column(self: Self, index: usize) @Vector(rows, T) {
-            return self.items[index];
-        }
-
-        pub inline fn row(self: Self, index: usize) @Vector(cols, T) {
-            var result: @Vector(cols, T) = undefined;
-            inline for (0..cols) |c| {
-                result[c] = self.items[c][index];
+            var result: @Vector(rows, T) = undefined;
+            inline for (0..rows) |r| {
+                result[r] = self.items[r][index];
             }
             return result;
         }
 
-        pub fn extract(self: Self, comptime sub_col: usize, comptime sub_row: usize) Mat(T, sub_col, sub_row) {
+        pub inline fn row(self: Self, index: usize) @Vector(cols, T) {
+            return self.items[index];
+        }
+
+        pub fn extract(self: Self, comptime sub_row: usize, comptime sub_col: usize) Mat(T, sub_row, sub_col) {
             if (sub_col > cols or sub_row > rows) @compileError("sub matrix dimensions must be less than or equal to matrix dimensions");
-            var result: Mat(T, sub_col, sub_row) = .from_column_major_array(undefined);
-            for (0..sub_col) |c| {
-                for (0..sub_row) |r| {
-                    result.items[c][r] = self.items[c][r];
+            var result: Mat(T, sub_row, sub_col) = undefined;
+            for (0..sub_row) |r| {
+                for (0..sub_col) |c| {
+                    result.items[r][c] = self.items[r][c];
                 }
             }
             return result;
@@ -122,9 +132,9 @@ pub fn Mat(comptime T: type, comptime cols_: usize, comptime rows_: usize) type 
 
         pub fn sub(self: Self, other: Self) Self {
             var result: Self = .{ .items = undefined };
-            for (0..cols) |c| {
-                for (0..rows) |r| {
-                    result.items[c][r] = self.items[c][r] - other.items[c][r];
+            for (0..rows) |r| {
+                for (0..cols) |c| {
+                    result.items[r][c] = self.items[r][c] - other.items[r][c];
                 }
             }
             return result;
@@ -139,8 +149,8 @@ pub fn Mat(comptime T: type, comptime cols_: usize, comptime rows_: usize) type 
                 result.items[0][0] = 1.0 / (aspect * tanHalfFovy);
                 result.items[1][1] = 1.0 / tanHalfFovy;
                 result.items[2][2] = far / (near - far);
-                result.items[2][3] = -1.0;
-                result.items[3][2] = -(far * near) / (far - near);
+                result.items[3][2] = -1.0;
+                result.items[2][3] = -(far * near) / (far - near);
 
                 return result;
             }
@@ -156,20 +166,20 @@ pub fn Mat(comptime T: type, comptime cols_: usize, comptime rows_: usize) type 
 
                 var result: Self = .identity;
                 result.items[0][0] = s[0];
-                result.items[1][0] = s[1];
-                result.items[2][0] = s[2];
+                result.items[0][1] = s[1];
+                result.items[0][2] = s[2];
 
-                result.items[0][1] = u[0];
+                result.items[1][0] = u[0];
                 result.items[1][1] = u[1];
-                result.items[2][1] = u[2];
+                result.items[1][2] = u[2];
 
-                result.items[0][2] = -f[0];
-                result.items[1][2] = -f[1];
+                result.items[2][0] = -f[0];
+                result.items[2][1] = -f[1];
                 result.items[2][2] = -f[2];
 
-                result.items[3][0] = -vec.dot(s, eye);
-                result.items[3][1] = -vec.dot(u, eye);
-                result.items[3][2] = vec.dot(f, eye);
+                result.items[0][3] = -vec.dot(s, eye);
+                result.items[1][3] = -vec.dot(u, eye);
+                result.items[2][3] = vec.dot(f, eye);
 
                 return result;
             }
@@ -178,8 +188,12 @@ pub fn Mat(comptime T: type, comptime cols_: usize, comptime rows_: usize) type 
 
         pub fn translate(self: Self, vector: @Vector(rows - 1, T)) Self {
             if (rows == cols) {
+                // The translation lives in the last column, one entry per row -- strided under
+                // row-major storage.
                 var result = self;
-                result.items[cols - 1][0 .. rows - 1].* = self.items[cols - 1][0 .. rows - 1].* + vector;
+                inline for (0..rows - 1) |r| {
+                    result.items[r][cols - 1] += vector[r];
+                }
                 return result;
             }
             unreachable;
@@ -187,7 +201,11 @@ pub fn Mat(comptime T: type, comptime cols_: usize, comptime rows_: usize) type 
 
         pub inline fn position(self: Self) @Vector(rows - 1, T) {
             if (rows == cols) {
-                return self.items[cols - 1][0 .. rows - 1].*;
+                var result: @Vector(rows - 1, T) = undefined;
+                inline for (0..rows - 1) |r| {
+                    result[r] = self.items[r][cols - 1];
+                }
+                return result;
             }
             unreachable;
         }
@@ -195,9 +213,12 @@ pub fn Mat(comptime T: type, comptime cols_: usize, comptime rows_: usize) type 
         /// Scaling transform matrix
         pub fn scale(self: Self, factors: @Vector(rows - 1, T)) Self {
             if (rows == cols) {
+                // Post-multiply by diag(factors): scale each basis column by its factor.
                 var result = self;
-                inline for (0..rows - 1) |i| {
-                    result.items[i][0 .. rows - 1].* = self.items[i][0 .. rows - 1].* * @as(@Vector(rows - 1, T), @splat(factors[i]));
+                inline for (0..rows - 1) |c| {
+                    inline for (0..rows - 1) |r| {
+                        result.items[r][c] = self.items[r][c] * factors[c];
+                    }
                 }
                 return result;
             }
@@ -211,33 +232,32 @@ pub fn Mat(comptime T: type, comptime cols_: usize, comptime rows_: usize) type 
                 const s = std.math.sin(angle);
                 const t = 1.0 - c;
 
-                const rot: Self = .{
-                    .items = .{
-                        .{ t * a[0] * a[0] + c, t * a[0] * a[1] + s * a[2], t * a[0] * a[2] - s * a[1], 0 },
-                        .{ t * a[0] * a[1] - s * a[2], t * a[1] * a[1] + c, t * a[1] * a[2] + s * a[0], 0 },
-                        .{ t * a[0] * a[2] + s * a[1], t * a[1] * a[2] - s * a[0], t * a[2] * a[2] + c, 0 },
-                        .{ 0, 0, 0, 1 },
-                    },
-                };
+                // Literal written as columns, transposed into row-major storage by `from_cols`.
+                const rot: Self = .from_cols(.{
+                    .{ t * a[0] * a[0] + c, t * a[0] * a[1] + s * a[2], t * a[0] * a[2] - s * a[1], 0 },
+                    .{ t * a[0] * a[1] - s * a[2], t * a[1] * a[1] + c, t * a[1] * a[2] + s * a[0], 0 },
+                    .{ t * a[0] * a[2] + s * a[1], t * a[1] * a[2] - s * a[0], t * a[2] * a[2] + c, 0 },
+                    .{ 0, 0, 0, 1 },
+                });
 
                 return self.mul(rot);
             }
             unreachable;
         }
 
-        /// The (cols-1)x(rows-1) sub matrix formed by deleting the given column and row.
-        pub fn minor(self: Self, comptime del_row: usize, comptime del_col: usize) Mat(T, cols - 1, rows - 1) {
-            var result: Mat(T, cols - 1, rows - 1) = undefined;
-            var cc: usize = 0;
-            inline for (0..cols) |c| {
-                if (c == del_col) continue;
-                var rr: usize = 0;
-                inline for (0..rows) |r| {
-                    if (r == del_row) continue;
-                    result.items[cc][rr] = self.items[c][r];
-                    rr += 1;
+        /// The (rows-1)x(cols-1) sub matrix formed by deleting the given row and column.
+        pub fn minor(self: Self, comptime del_row: usize, comptime del_col: usize) Mat(T, rows - 1, cols - 1) {
+            var result: Mat(T, rows - 1, cols - 1) = undefined;
+            var rr: usize = 0;
+            inline for (0..rows) |r| {
+                if (r == del_row) continue;
+                var cc: usize = 0;
+                inline for (0..cols) |c| {
+                    if (c == del_col) continue;
+                    result.items[rr][cc] = self.items[r][c];
+                    cc += 1;
                 }
-                cc += 1;
+                rr += 1;
             }
             return result;
         }
@@ -246,11 +266,11 @@ pub fn Mat(comptime T: type, comptime cols_: usize, comptime rows_: usize) type 
         pub fn determinant(self: Self) T {
             comptime std.debug.assert(is_square);
             if (rows == 1) return self.items[0][0];
-            if (rows == 2) return self.items[0][0] * self.items[1][1] - self.items[1][0] * self.items[0][1];
+            if (rows == 2) return self.items[0][0] * self.items[1][1] - self.items[0][1] * self.items[1][0];
             var det: T = 0;
             inline for (0..cols) |c| {
                 const sign: T = if (c % 2 == 0) 1 else -1;
-                det += sign * self.items[c][0] * self.minor(0, c).determinant();
+                det += sign * self.items[0][c] * self.minor(0, c).determinant();
             }
             return det;
         }
@@ -265,7 +285,7 @@ pub fn Mat(comptime T: type, comptime cols_: usize, comptime rows_: usize) type 
             inline for (0..rows) |i| {
                 inline for (0..cols) |j| {
                     const sign: T = if ((i + j) % 2 == 0) 1 else -1;
-                    result.items[j][i] = sign * self.minor(j, i).determinant() * inv_det;
+                    result.items[i][j] = sign * self.minor(j, i).determinant() * inv_det;
                 }
             }
             return result;
@@ -276,18 +296,18 @@ pub fn Mat(comptime T: type, comptime cols_: usize, comptime rows_: usize) type 
         pub fn inverse_ortho(self: Self) Self {
             comptime std.debug.assert(rows == 4 and cols == 4);
             var result: Self = .identity;
-            inline for (0..3) |c| {
-                inline for (0..3) |r| {
-                    result.items[c][r] = self.items[r][c];
+            inline for (0..3) |i| {
+                inline for (0..3) |j| {
+                    result.items[i][j] = self.items[j][i];
                 }
             }
             const t = self.position();
-            inline for (0..3) |r| {
+            inline for (0..3) |i| {
                 var s: T = 0;
                 inline for (0..3) |k| {
-                    s += self.items[r][k] * t[k];
+                    s += self.items[k][i] * t[k];
                 }
-                result.items[3][r] = -s;
+                result.items[i][3] = -s;
             }
             return result;
         }
@@ -301,13 +321,13 @@ pub fn Mat(comptime T: type, comptime cols_: usize, comptime rows_: usize) type 
             const w = q[3];
             var result: Self = .identity;
             result.items[0][0] = 1 - 2 * (y * y + z * z);
-            result.items[0][1] = 2 * (x * y + w * z);
-            result.items[0][2] = 2 * (x * z - w * y);
-            result.items[1][0] = 2 * (x * y - w * z);
+            result.items[1][0] = 2 * (x * y + w * z);
+            result.items[2][0] = 2 * (x * z - w * y);
+            result.items[0][1] = 2 * (x * y - w * z);
             result.items[1][1] = 1 - 2 * (x * x + z * z);
-            result.items[1][2] = 2 * (y * z + w * x);
-            result.items[2][0] = 2 * (x * z + w * y);
-            result.items[2][1] = 2 * (y * z - w * x);
+            result.items[2][1] = 2 * (y * z + w * x);
+            result.items[0][2] = 2 * (x * z + w * y);
+            result.items[1][2] = 2 * (y * z - w * x);
             result.items[2][2] = 1 - 2 * (x * x + y * y);
             return result;
         }
@@ -319,9 +339,9 @@ pub fn Mat(comptime T: type, comptime cols_: usize, comptime rows_: usize) type 
                 result.items[0][0] = 2.0 / (right - left);
                 result.items[1][1] = 2.0 / (top - bottom);
                 result.items[2][2] = -1.0 / (far - near);
-                result.items[3][0] = -(right + left) / (right - left);
-                result.items[3][1] = -(top + bottom) / (top - bottom);
-                result.items[3][2] = -near / (far - near);
+                result.items[0][3] = -(right + left) / (right - left);
+                result.items[1][3] = -(top + bottom) / (top - bottom);
+                result.items[2][3] = -near / (far - near);
                 return result;
             }
             unreachable;
@@ -335,8 +355,8 @@ pub fn Mat(comptime T: type, comptime cols_: usize, comptime rows_: usize) type 
                 result.items[0][0] = 1.0 / (aspect * tan_half_fovy);
                 result.items[1][1] = 1.0 / tan_half_fovy;
                 result.items[2][2] = -1.0;
-                result.items[2][3] = -1.0;
-                result.items[3][2] = -near;
+                result.items[3][2] = -1.0;
+                result.items[2][3] = -near;
                 return result;
             }
             unreachable;
@@ -351,8 +371,8 @@ pub fn Mat(comptime T: type, comptime cols_: usize, comptime rows_: usize) type 
                 result.items[0][0] = 1.0 / (aspect * tan_half_fovy);
                 result.items[1][1] = 1.0 / tan_half_fovy;
                 result.items[2][2] = near / (far - near);
-                result.items[2][3] = -1.0;
-                result.items[3][2] = (far * near) / (far - near);
+                result.items[3][2] = -1.0;
+                result.items[2][3] = (far * near) / (far - near);
                 return result;
             }
             unreachable;
@@ -363,7 +383,7 @@ pub fn Mat(comptime T: type, comptime cols_: usize, comptime rows_: usize) type 
             comptime std.debug.assert(rows >= 3 and cols >= 3);
             var s: @Vector(3, T) = undefined;
             inline for (0..3) |i| {
-                s[i] = vec.norm(@Vector(3, T){ self.items[i][0], self.items[i][1], self.items[i][2] });
+                s[i] = vec.norm(@Vector(3, T){ self.items[0][i], self.items[1][i], self.items[2][i] });
             }
             return s;
         }
@@ -383,7 +403,7 @@ pub fn Mat(comptime T: type, comptime cols_: usize, comptime rows_: usize) type 
             inline for (0..3) |i| {
                 const inv = 1.0 / s[i];
                 inline for (0..3) |r| {
-                    rot.items[i][r] = self.items[i][r] * inv;
+                    rot.items[r][i] = self.items[r][i] * inv;
                 }
             }
             return .{
@@ -406,7 +426,7 @@ pub fn Mat(comptime T: type, comptime cols_: usize, comptime rows_: usize) type 
             comptime std.debug.assert(rows == 4 and cols == 4);
             const tan_half = 1.0 / self.items[1][1];
             const a = self.items[2][2];
-            const b = self.items[3][2];
+            const b = self.items[2][3];
             const near = b / a;
             return .{
                 .near = near,
@@ -416,24 +436,26 @@ pub fn Mat(comptime T: type, comptime cols_: usize, comptime rows_: usize) type 
             };
         }
 
+        /// Identity for square matrices, and `[I | 0]` for affine matrices whose last row is
+        /// elided (`cols == rows + 1`, e.g. the 3x4 that represents a 4x4 rigid transform).
         pub const identity = blk: {
-            if (rows == cols) {
+            if (rows == cols or cols == rows + 1) {
                 var result: Self = .zero;
-                for (0..cols) |i| {
+                for (0..rows) |i| {
                     result.items[i][i] = 1;
                 }
                 break :blk result;
             }
-            unreachable;
+            @compileError("identity is only defined for square or affine (cols == rows + 1) matrices");
         };
 
-        pub const zero: Self = .from_column_major_array(@splat(@splat(0)));
+        pub const zero: Self = .{ .items = @splat(@splat(0)) };
 
         pub fn format(self: @This(), writer: *std.Io.Writer) std.Io.Writer.Error!void {
             var max_widths: [cols]usize = @splat(0);
             for (0..cols) |c| {
                 for (0..rows) |r| {
-                    const len = std.fmt.count("{d}", .{self.items[c][r]});
+                    const len = std.fmt.count("{d}", .{self.items[r][c]});
                     max_widths[c] = @max(max_widths[c], len);
                 }
             }
@@ -441,11 +463,11 @@ pub fn Mat(comptime T: type, comptime cols_: usize, comptime rows_: usize) type 
             for (0..rows) |r| {
                 try writer.writeAll("[");
                 for (0..cols) |c| {
-                    const len = std.fmt.count("{d}", .{self.items[c][r]});
+                    const len = std.fmt.count("{d}", .{self.items[r][c]});
                     for (0..max_widths[c] - len) |_| {
                         try writer.writeByte(' ');
                     }
-                    try writer.print("{d}", .{self.items[c][r]});
+                    try writer.print("{d}", .{self.items[r][c]});
                     if (c < cols - 1) try writer.writeAll(", ");
                 }
                 try writer.writeByte(']');
@@ -454,9 +476,9 @@ pub fn Mat(comptime T: type, comptime cols_: usize, comptime rows_: usize) type 
         }
 
         pub fn eql(self: Self, other: Self) bool {
-            for (0..cols) |c| {
-                for (0..rows) |r| {
-                    if (self.items[c][r] != other.items[c][r]) {
+            for (0..rows) |r| {
+                for (0..cols) |c| {
+                    if (self.items[r][c] != other.items[r][c]) {
                         return false;
                     }
                 }
@@ -466,8 +488,44 @@ pub fn Mat(comptime T: type, comptime cols_: usize, comptime rows_: usize) type 
     };
 }
 
+// Pins the in-memory representation of `Mat`, which every operation in this file silently
+// depends on. This is deliberately the one test a change of storage convention cannot leave
+// alone: any future change MUST rewrite the expected byte order below, so it shows up in review
+// instead of passing quietly. Transpose-invariant checks (identity, determinant,
+// `M * M.inverse()`, `from/to` round-trips) would all stay green through a wrong flip; this
+// one won't.
+//
+// Convention: `Mat(T, rows, cols)` stores `items: [rows][cols]T` -- row-major, row count first.
+// Element (row r, col c) lives at linear index `r * cols + c`.
+test "storage layout is row-major" {
+    const M = Mat(f32, 3, 2); // 3 rows, 2 columns
+    const m: M = .{ .items = .{
+        .{ 1, 2 }, // row 0: cols 0,1
+        .{ 3, 4 }, // row 1
+        .{ 5, 6 }, // row 2
+    } };
+
+    // Raw storage: the three rows laid end to end.
+    const flat: [6]f32 = @bitCast(m.items);
+    try std.testing.expectEqual([6]f32{ 1, 2, 3, 4, 5, 6 }, flat);
+
+    // Constructors agree with that storage.
+    try std.testing.expectEqual(m, M.from_rows(.{ .{ 1, 2 }, .{ 3, 4 }, .{ 5, 6 } }));
+    try std.testing.expectEqual(m, M.from_cols(.{ .{ 1, 3, 5 }, .{ 2, 4, 6 } }));
+
+    // Accessors read the logical row/column, independent of storage.
+    try std.testing.expectEqual(@Vector(2, f32){ 1, 2 }, m.row(0));
+    try std.testing.expectEqual(@Vector(2, f32){ 5, 6 }, m.row(2));
+    try std.testing.expectEqual(@Vector(3, f32){ 1, 3, 5 }, m.column(0));
+    try std.testing.expectEqual(@Vector(3, f32){ 2, 4, 6 }, m.column(1));
+
+    // Element access is items[row][col].
+    try std.testing.expectEqual(@as(f32, 4), m.items[1][1]); // row 1, col 1
+    try std.testing.expectEqual(@as(f32, 6), m.items[2][1]); // row 2, col 1
+}
+
 test "format" {
-    const c: Mat(f32, 3, 3) = .from_row_major_array(.{
+    const c: Mat(f32, 3, 3) = .from_rows(.{
         .{ 9, 12, 15 },
         .{ 19, 26, 33 },
         .{ 29, 40, 51 },
@@ -483,7 +541,7 @@ test "format" {
 
 test "translate" {
     const c = Mat(f32, 4, 4).identity.translate(.{ 1, 2, 3 });
-    const expected: Mat(f32, 4, 4) = .from_row_major_array(.{
+    const expected: Mat(f32, 4, 4) = .from_rows(.{
         .{ 1, 0, 0, 1 },
         .{ 0, 1, 0, 2 },
         .{ 0, 0, 1, 3 },
@@ -512,17 +570,17 @@ test "modify_column" {
 
 test "mul" {
     {
-        const a = Mat(f32, 2, 2).from_column_major_array(.{
+        const a = Mat(f32, 2, 2).from_cols(.{
             .{ 1, 2 },
             .{ 3, 4 },
         });
-        const b = Mat(f32, 2, 2).from_column_major_array(.{
+        const b = Mat(f32, 2, 2).from_cols(.{
             .{ 5, 6 },
             .{ 7, 8 },
         });
         const c = a.mul(b);
 
-        const excpected_c = Mat(f32, 2, 2).from_column_major_array(.{
+        const excpected_c = Mat(f32, 2, 2).from_cols(.{
             .{ 23, 34 },
             .{ 31, 46 },
         });
@@ -530,18 +588,19 @@ test "mul" {
     }
 
     {
-        const a = Mat(f32, 2, 3).from_column_major_array(.{
+        // a is 3x2 (its columns are (1,2,3) and (4,5,6)); b is 2x3.
+        const a = Mat(f32, 3, 2).from_cols(.{
             .{ 1, 2, 3 },
             .{ 4, 5, 6 },
         });
-        const b = Mat(f32, 3, 2).from_column_major_array(.{
+        const b = Mat(f32, 2, 3).from_cols(.{
             .{ 1, 2 },
             .{ 3, 4 },
             .{ 5, 6 },
         });
         const c = a.mul(b);
 
-        const excpected_c = Mat(f32, 3, 3).from_column_major_array(.{
+        const excpected_c = Mat(f32, 3, 3).from_cols(.{
             .{ 9, 12, 15 },
             .{ 19, 26, 33 },
             .{ 29, 40, 51 },
@@ -550,13 +609,13 @@ test "mul" {
     }
 
     {
-        const a = Mat(f32, 4, 4).from_column_major_array(.{
+        const a = Mat(f32, 4, 4).from_cols(.{
             .{ 1, 2, 3, 4 },
             .{ 5, 6, 7, 8 },
             .{ 9, 10, 11, 12 },
             .{ 13, 14, 15, 16 },
         });
-        const b = Mat(f32, 4, 4).from_column_major_array(.{
+        const b = Mat(f32, 4, 4).from_cols(.{
             .{ 17, 18, 19, 20 },
             .{ 21, 22, 23, 24 },
             .{ 25, 26, 27, 28 },
@@ -564,7 +623,7 @@ test "mul" {
         });
         const c = a.mul(b);
 
-        const excpected_c = Mat(f32, 4, 4).from_column_major_array(.{
+        const excpected_c = Mat(f32, 4, 4).from_cols(.{
             .{ 538, 612, 686, 760 },
             .{ 650, 740, 830, 920 },
             .{ 762, 868, 974, 1080 },
@@ -576,7 +635,7 @@ test "mul" {
 
 test "scale" {
     {
-        const mat: Mat(f32, 4, 4) = .from_row_major_array(.{
+        const mat: Mat(f32, 4, 4) = .from_rows(.{
             .{ 1, 0, 0, 5 },
             .{ 0, 1, 0, 6 },
             .{ 0, 0, 1, 7 },
@@ -584,7 +643,7 @@ test "scale" {
         });
         const scaled = mat.scale(.{ 2, 3, 4 });
 
-        const expected: Mat(f32, 4, 4) = .from_row_major_array(.{
+        const expected: Mat(f32, 4, 4) = .from_rows(.{
             .{ 2, 0, 0, 5 },
             .{ 0, 3, 0, 6 },
             .{ 0, 0, 4, 7 },
@@ -594,7 +653,7 @@ test "scale" {
     }
 
     {
-        const mat: Mat(f32, 3, 3) = .from_row_major_array(.{
+        const mat: Mat(f32, 3, 3) = .from_rows(.{
             .{ 0.707, -0.707, 0 },
             .{ 0.707, 0.707, 0 },
             .{ 0, 0, 1 },
@@ -602,7 +661,7 @@ test "scale" {
 
         const scaled = mat.scale(.{ 2, 3 });
 
-        const expected: Mat(f32, 3, 3) = .from_row_major_array(.{
+        const expected: Mat(f32, 3, 3) = .from_rows(.{
             .{ 1.414, -2.121, 0 },
             .{ 1.414, 2.121, 0 },
             .{ 0, 0, 1 },
@@ -617,17 +676,18 @@ test "scale" {
 }
 
 fn mul_vec4(m: Mat(f32, 4, 4), v: @Vector(4, f32)) @Vector(4, f32) {
-    var out: @Vector(4, f32) = .{ 0, 0, 0, 0 };
-    inline for (0..4) |c| {
-        out += @as(@Vector(4, f32), m.items[c]) * @as(@Vector(4, f32), @splat(v[c]));
+    // M * v: row r of the result is dot(row r of m, v). Rows are contiguous under row-major.
+    var out: @Vector(4, f32) = undefined;
+    inline for (0..4) |r| {
+        out[r] = @reduce(.Add, @as(@Vector(4, f32), m.items[r]) * v);
     }
     return out;
 }
 
-fn expect_mat_close(comptime C: usize, comptime R: usize, expected: Mat(f32, C, R), actual: Mat(f32, C, R), tol: f32) !void {
-    inline for (0..C) |c| {
-        inline for (0..R) |r| {
-            try std.testing.expectApproxEqAbs(expected.items[c][r], actual.items[c][r], tol);
+fn expect_mat_close(comptime R: usize, comptime C: usize, expected: Mat(f32, R, C), actual: Mat(f32, R, C), tol: f32) !void {
+    inline for (0..R) |r| {
+        inline for (0..C) |c| {
+            try std.testing.expectApproxEqAbs(expected.items[r][c], actual.items[r][c], tol);
         }
     }
 }
@@ -635,13 +695,13 @@ fn expect_mat_close(comptime C: usize, comptime R: usize, expected: Mat(f32, C, 
 test "determinant" {
     try std.testing.expectEqual(@as(f32, 1), Mat(f32, 4, 4).identity.determinant());
 
-    const m2: Mat(f32, 2, 2) = .from_row_major_array(.{
+    const m2: Mat(f32, 2, 2) = .from_rows(.{
         .{ 1, 2 },
         .{ 3, 4 },
     });
     try std.testing.expectApproxEqAbs(@as(f32, -2), m2.determinant(), 1e-6);
 
-    const m3: Mat(f32, 3, 3) = .from_row_major_array(.{
+    const m3: Mat(f32, 3, 3) = .from_rows(.{
         .{ 2, 0, 1 },
         .{ 1, 3, 2 },
         .{ 1, 0, 1 },
@@ -650,7 +710,7 @@ test "determinant" {
 }
 
 test "inverse" {
-    const m: Mat(f32, 4, 4) = .from_row_major_array(.{
+    const m: Mat(f32, 4, 4) = .from_rows(.{
         .{ 4, 1, 0, 0 },
         .{ 1, 3, 1, 0 },
         .{ 0, 1, 2, 1 },
@@ -658,7 +718,7 @@ test "inverse" {
     });
     try expect_mat_close(4, 4, .identity, m.mul(m.inverse()), 1e-4);
 
-    const m3: Mat(f32, 3, 3) = .from_row_major_array(.{
+    const m3: Mat(f32, 3, 3) = .from_rows(.{
         .{ 2, 0, 1 },
         .{ 1, 3, 2 },
         .{ 1, 0, 1 },

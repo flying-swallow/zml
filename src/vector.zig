@@ -18,10 +18,11 @@ pub const Vec4f64 = @Vector(4, f64);
 pub const Vec3f64 = @Vector(3, f64);
 pub const Vec2f64 = @Vector(2, f64);
 
-pub fn to_mat(vec: anytype) Mat(meta.Child(@TypeOf(vec)), 1, meta.lengthOf(@TypeOf(vec))) {
-    var result: Mat(meta.Child(@TypeOf(vec)), 1, meta.lengthOf(@TypeOf(vec))) = .zero;
+/// Turn a length-N vector into an N x 1 column matrix, for use as the right operand of `mul`.
+pub fn to_mat(vec: anytype) Mat(meta.Child(@TypeOf(vec)), meta.lengthOf(@TypeOf(vec)), 1) {
+    var result: Mat(meta.Child(@TypeOf(vec)), meta.lengthOf(@TypeOf(vec)), 1) = .zero;
     inline for (0..meta.lengthOf(@TypeOf(vec))) |i| {
-        result.items[0][i] = vec[i];
+        result.items[i][0] = vec[i];
     }
     return result;
 }
@@ -309,6 +310,70 @@ pub inline fn scale(a: anytype, value: meta.Child(@TypeOf(a))) @TypeOf(a) {
     return v * @as(V, @splat(value));
 }
 
+/// Element-wise `a + b`, preserving the container kind (array in -> array out).
+pub fn add(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
+    if (@typeInfo(@TypeOf(a)) == .array)
+        return simd.mapBinary(a, b, {}, struct {
+            fn op(x: anytype, y: anytype, _: void) @TypeOf(x) {
+                return x + y;
+            }
+        }.op);
+    const av: meta.AsVector(@TypeOf(a)) = a;
+    const bv: meta.AsVector(@TypeOf(a)) = b;
+    return av + bv;
+}
+
+/// Element-wise `a - b`, preserving the container kind (array in -> array out).
+pub fn sub(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
+    if (@typeInfo(@TypeOf(a)) == .array)
+        return simd.sub(a, b);
+    const av: meta.AsVector(@TypeOf(a)) = a;
+    const bv: meta.AsVector(@TypeOf(a)) = b;
+    return av - bv;
+}
+
+/// Element-wise (Hadamard) `a * b`, preserving the container kind.
+pub fn mul(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
+    if (@typeInfo(@TypeOf(a)) == .array)
+        return simd.mapBinary(a, b, {}, struct {
+            fn op(x: anytype, y: anytype, _: void) @TypeOf(x) {
+                return x * y;
+            }
+        }.op);
+    const av: meta.AsVector(@TypeOf(a)) = a;
+    const bv: meta.AsVector(@TypeOf(a)) = b;
+    return av * bv;
+}
+
+/// Element-wise `a / b`, preserving the container kind.
+pub fn div(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
+    if (@typeInfo(@TypeOf(a)) == .array)
+        return simd.mapBinary(a, b, {}, struct {
+            fn op(x: anytype, y: anytype, _: void) @TypeOf(x) {
+                return x / y;
+            }
+        }.op);
+    const av: meta.AsVector(@TypeOf(a)) = a;
+    const bv: meta.AsVector(@TypeOf(a)) = b;
+    return av / bv;
+}
+
+/// Squared distance between two vectors. Cheaper than `distance` when only comparisons are needed.
+pub inline fn distance_sqr(a: anytype, b: @TypeOf(a)) Float(@bitSizeOf(meta.Child(@TypeOf(a)))) {
+    if (@typeInfo(@TypeOf(a)) == .array)
+        return norm_sqr(simd.sub(a, b));
+    const av: meta.AsVector(@TypeOf(a)) = a;
+    const bv: meta.AsVector(@TypeOf(a)) = b;
+    return norm_sqr(av - bv);
+}
+
+/// Exact (bitwise) equality of two vectors, container-kind agnostic.
+pub fn eql(a: anytype, b: @TypeOf(a)) bool {
+    const av: meta.AsVector(@TypeOf(a)) = a;
+    const bv: meta.AsVector(@TypeOf(a)) = b;
+    return @reduce(.And, av == bv);
+}
+
 pub fn is_close_default(a: anytype, b: @TypeOf(a)) bool {
     return is_close(a, b, 1.0e-12);
 }
@@ -401,6 +466,28 @@ test scale {
     const v = @Vector(2, f32){ 1, 2 };
     try std.testing.expectEqual(@Vector(2, f32){ 2, 4 }, scale(v, 2));
     try std.testing.expectEqual(@Vector(2, f32){ 0.5, 1 }, scale(v, 0.5));
+}
+
+test "add sub mul div distance_sqr eql" {
+    const a = @Vector(3, f32){ 1, 2, 3 };
+    const b = @Vector(3, f32){ 4, 5, 6 };
+    try std.testing.expectEqual(@Vector(3, f32){ 5, 7, 9 }, add(a, b));
+    try std.testing.expectEqual(@Vector(3, f32){ -3, -3, -3 }, sub(a, b));
+    try std.testing.expectEqual(@Vector(3, f32){ 4, 10, 18 }, mul(a, b));
+    try std.testing.expectEqual(@Vector(3, f32){ 4, 2.5, 2 }, div(b, a));
+    try std.testing.expectEqual(@as(f32, 27), distance_sqr(a, b));
+    try std.testing.expect(eql(a, a));
+    try std.testing.expect(!eql(a, b));
+
+    // Array inputs preserve the array container.
+    const aa = [3]f32{ 1, 2, 3 };
+    const ba = [3]f32{ 4, 5, 6 };
+    try std.testing.expect(@TypeOf(add(aa, ba)) == [3]f32);
+    try std.testing.expectEqual([3]f32{ 5, 7, 9 }, add(aa, ba));
+    try std.testing.expectEqual([3]f32{ 4, 10, 18 }, mul(aa, ba));
+    try std.testing.expectEqual(@as(f32, 27), distance_sqr(aa, ba));
+    try std.testing.expect(eql(aa, aa));
+    try std.testing.expect(!eql(aa, ba));
 }
 
 test is_close {
