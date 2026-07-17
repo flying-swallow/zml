@@ -7,7 +7,7 @@ A high-performance linear algebra library for Zig, providing vector, matrix, qua
 ## Features
 
 - **Vectors** (`zml.vec`) — norm, dot, cross, normalize, reflect, distance, angle, swizzle, fused `sin_cos`, and more.
-- **Matrices** (`zml.Mat`) — generic column-major `Mat(T, cols, rows)` with multiply, transforms, etc.
+- **Matrices** (`zml.Mat`) — generic column-major `Mat(T, cols, rows)` (`items: [cols][rows]T`, GPU-upload ready) with multiply, transforms, etc.
 - **Quaternions** (`zml.quat`) — rotation, slerp/nlerp, axis-angle and Euler conversions.
 - **Geometry** (`zml.geom`) — AABB, sphere, plane, capsule, OBB, ray, frustum, overlap/containment tests.
 - Extras: `zml.scalar` (clamp/lerp/smoothstep), `zml.color`, `zml.packing`, `zml.random`.

@@ -1,7 +1,7 @@
-//! Affine transforms stored as a `Mat(T, dim, dim+1)` with the implicit bottom row `[0..0, 1]`
-//! elided: 2x3 in 2d, 3x4 in 3d. Row-major, so `items[i][dim]` is the translation on axis i and the
-//! layout is byte-compatible with a compact GPU transform. Ported from Games-by-Mason's mr_geom
-//! (MIT).
+//! Affine transforms: a `dim x (dim+1)` matrix with the implicit bottom row `[0..0, 1]` elided
+//! (2x3 in 2d, 3x4 in 3d), stored column-major as `Mat(T, dim+1, dim)`. Column-major, so the
+//! translation is the contiguous last column (`items[dim]`) and the layout uploads directly to a
+//! GPU without a transpose. Ported from Games-by-Mason's mr_geom (MIT).
 //!
 //! These are FREE FUNCTIONS, not `Mat` methods, on purpose: a `Mat(T, dim, dim+1)` is also a valid
 //! general (dim)x(dim+1) matrix, and `affine.times` (implicit `[0..0,1]` row) means something
@@ -18,13 +18,13 @@ const vector = @import("vector.zig");
 /// The affine matrix type acting on a length-N vector type `Vt`.
 pub fn AffineForVec(comptime Vt: type) type {
     const dim = meta.lengthOf(Vt);
-    return Mat(meta.Child(Vt), dim, dim + 1);
+    return Mat(meta.Child(Vt), dim + 1, dim);
 }
 
 /// The affine matrix type paired with a rotor type `R`.
 pub fn AffineForRotor(comptime R: type) type {
     const dim = if (meta.lengthOf(R) == 2) 2 else 3;
-    return Mat(meta.Child(R), dim, dim + 1);
+    return Mat(meta.Child(R), dim + 1, dim);
 }
 
 /// A translation matrix from a translation vector.
@@ -32,7 +32,8 @@ pub fn translation(delta: anytype) AffineForVec(@TypeOf(delta)) {
     const M = AffineForVec(@TypeOf(delta));
     const dim = M.rows;
     var result: M = .identity;
-    inline for (0..dim) |i| result.items[i][dim] = delta[i];
+    // Translation is the last column, contiguous under column-major storage.
+    inline for (0..dim) |i| result.items[dim][i] = delta[i];
     return result;
 }
 
@@ -59,7 +60,7 @@ pub fn rotation(r: anytype) AffineForRotor(@TypeOf(r)) {
         var axis: @Vector(dim, T) = @splat(0);
         axis[i] = 1;
         const rotated: @Vector(dim, T) = rotor.times_vec(inv, axis);
-        inline for (0..dim) |j| result.items[i][j] = rotated[j];
+        inline for (0..dim) |j| result.items[j][i] = rotated[j];
     }
     return result;
 }
@@ -69,17 +70,16 @@ pub fn times(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
     const M = @TypeOf(a);
     const dim = M.rows;
     const T = M.Type;
-    const Row = @Vector(dim + 1, T);
+    const Col = @Vector(dim, T);
     var result: M = undefined;
-    inline for (0..dim) |i| {
-        // b's implicit bottom row is [0..0, 1]; a's row i contributes a.items[i][dim] to it.
-        var acc: Row = @splat(0);
-        acc[dim] = a.items[i][dim];
+    inline for (0..dim + 1) |j| {
+        // Result column j = sum_k (column k of a's linear part) * b[k][j]. For the translation
+        // column (j == dim), b's implicit bottom row `[0..0, 1]` adds a's own translation column.
+        var acc: Col = if (j == dim) @as(Col, a.items[dim]) else @splat(0);
         inline for (0..dim) |k| {
-            const bk: Row = b.items[k];
-            acc = @mulAdd(Row, @as(Row, @splat(a.items[i][k])), bk, acc);
+            acc = @mulAdd(Col, @as(Col, @splat(b.items[j][k])), @as(Col, a.items[k]), acc);
         }
-        result.items[i] = acc;
+        result.items[j] = acc;
     }
     return result;
 }
@@ -94,7 +94,7 @@ pub fn applied(self: anytype, other: @TypeOf(self)) @TypeOf(self) {
 pub fn get_translation(m: anytype) @Vector(@TypeOf(m).rows, @TypeOf(m).Type) {
     const dim = @TypeOf(m).rows;
     var result: @Vector(dim, @TypeOf(m).Type) = undefined;
-    inline for (0..dim) |i| result[i] = m.items[i][dim];
+    inline for (0..dim) |i| result[i] = m.items[dim][i];
     return result;
 }
 
@@ -108,8 +108,8 @@ pub fn get_scale(m: anytype) @Vector(@TypeOf(m).rows, @TypeOf(m).Type) {
     const T = @TypeOf(m).Type;
     var result: @Vector(dim, T) = undefined;
     inline for (0..dim) |j| {
-        var col: @Vector(dim, T) = undefined;
-        inline for (0..dim) |i| col[i] = m.items[i][j];
+        // Column j is contiguous under column-major storage.
+        const col: @Vector(dim, T) = m.items[j];
         result[j] = vector.norm(col);
     }
     return result;
@@ -123,7 +123,7 @@ pub fn times_dir(m: anytype, v: anytype) @Vector(@TypeOf(m).rows, @TypeOf(m).Typ
     var result: @Vector(dim, T) = undefined;
     inline for (0..dim) |i| {
         var lin: @Vector(dim, T) = undefined;
-        inline for (0..dim) |j| lin[j] = m.items[i][j];
+        inline for (0..dim) |j| lin[j] = m.items[j][i];
         result[i] = @reduce(.Add, lin * vv);
     }
     return result;
@@ -137,8 +137,8 @@ pub fn times_point(m: anytype, v: anytype) @Vector(@TypeOf(m).rows, @TypeOf(m).T
     var result: @Vector(dim, T) = undefined;
     inline for (0..dim) |i| {
         var lin: @Vector(dim, T) = undefined;
-        inline for (0..dim) |j| lin[j] = m.items[i][j];
-        result[i] = @reduce(.Add, lin * vv) + m.items[i][dim];
+        inline for (0..dim) |j| lin[j] = m.items[j][i];
+        result[i] = @reduce(.Add, lin * vv) + m.items[dim][i];
     }
     return result;
 }
@@ -150,8 +150,8 @@ pub fn times_point(m: anytype, v: anytype) @Vector(@TypeOf(m).rows, @TypeOf(m).T
 const zml_testing = @import("testing.zig");
 
 test "affine matrix sizes are pinned" {
-    try std.testing.expectEqual(@as(usize, 24), @sizeOf(Mat(f32, 2, 3)));
-    try std.testing.expectEqual(@as(usize, 48), @sizeOf(Mat(f32, 3, 4)));
+    try std.testing.expectEqual(@as(usize, 24), @sizeOf(Mat(f32, 3, 2)));
+    try std.testing.expectEqual(@as(usize, 48), @sizeOf(Mat(f32, 4, 3)));
 }
 
 test "translation" {
@@ -223,7 +223,7 @@ test "2d affine round trip" {
 }
 
 test "affine ops work on [N]f32-backed matrices" {
-    // Mat is always @Vector-free storage ([rows][cols]T), so this mainly guards the vector args.
+    // Mat is always @Vector-free storage ([cols][rows]T), so this mainly guards the vector args.
     const m = translation([3]f32{ 1, 2, 3 });
     try std.testing.expectEqual(@Vector(3, f32){ 1, 2, 3 }, get_translation(m));
 }

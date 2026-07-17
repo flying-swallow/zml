@@ -35,16 +35,25 @@ pub fn overlap_aabb_plane(a: anytype, b: anytype) bool {
     return dist_normal * dist_min_normal <= 0;
 }
 
-pub fn overlap_aabb_aabb_4(a: anytype, minX: @Vector(4, @TypeOf(a).inner_type), maxX: @Vector(4, @TypeOf(a).inner_type), minY: @Vector(4, @TypeOf(a).inner_type), maxY: @Vector(4, @TypeOf(a).inner_type), minZ: @Vector(4, @TypeOf(a).inner_type), maxZ: @Vector(4, @TypeOf(a).inner_type)) @Vector(4, bool) {
+pub fn overlap_aabb_sphere(a: anytype, b: anytype) bool {
+    comptime {
+        std.debug.assert(@TypeOf(a).child == @TypeOf(b).child);
+        std.debug.assert(@TypeOf(a).primative_type == .AABB);
+        std.debug.assert(@TypeOf(b).primative_type == .Sphere);
+    }
+    return a.get_sqr_distance_to(b.center) <= b.radius * b.radius;
+}
+
+pub fn overlap_aabb_aabb_4(a: anytype, minX: @Vector(4, @TypeOf(a).child), maxX: @Vector(4, @TypeOf(a).child), minY: @Vector(4, @TypeOf(a).child), maxY: @Vector(4, @TypeOf(a).child), minZ: @Vector(4, @TypeOf(a).child), maxZ: @Vector(4, @TypeOf(a).child)) @Vector(4, bool) {
     comptime {
         std.debug.assert(@TypeOf(a).primative_type == .AABB);
     }
-    const box1_minx = @as(@Vector(4, @TypeOf(a).inner_type), @splat(a.min[0]));
-    const box1_miny = @as(@Vector(4, @TypeOf(a).inner_type), @splat(a.min[1]));
-    const box1_minz = @as(@Vector(4, @TypeOf(a).inner_type), @splat(a.min[2]));
-    const box1_maxx = @as(@Vector(4, @TypeOf(a).inner_type), @splat(a.max[0]));
-    const box1_maxy = @as(@Vector(4, @TypeOf(a).inner_type), @splat(a.max[1]));
-    const box1_maxz = @as(@Vector(4, @TypeOf(a).inner_type), @splat(a.max[2]));
+    const box1_minx = @as(@Vector(4, @TypeOf(a).child), @splat(a.min[0]));
+    const box1_miny = @as(@Vector(4, @TypeOf(a).child), @splat(a.min[1]));
+    const box1_minz = @as(@Vector(4, @TypeOf(a).child), @splat(a.min[2]));
+    const box1_maxx = @as(@Vector(4, @TypeOf(a).child), @splat(a.max[0]));
+    const box1_maxy = @as(@Vector(4, @TypeOf(a).child), @splat(a.max[1]));
+    const box1_maxz = @as(@Vector(4, @TypeOf(a).child), @splat(a.max[2]));
 
     const nooverlap_x = (box1_minx > maxX) | (box1_maxx < minX);
     const nooverlap_y = (box1_miny > maxY) | (box1_maxy < minY);
@@ -110,7 +119,11 @@ pub inline fn overlap(a: anytype, b: anytype) bool {
     const b_primative: geometry.Primative = @TypeOf(b).primative_type;
     if (a_primative == .Sphere and b_primative == .Sphere) return overlap_sphere_sphere(a, b);
     if (a_primative == .AABB and b_primative == .AABB) return overlap_aabb_aabb(a, b);
-    @compileError("Unsupported primative overlap: " ++ @typeName(a_primative) ++ " " ++ @typeName(b_primative));
+    if (a_primative == .AABB and b_primative == .Plane) return overlap_aabb_plane(a, b);
+    if (a_primative == .Plane and b_primative == .AABB) return overlap_aabb_plane(b, a);
+    if (a_primative == .AABB and b_primative == .Sphere) return overlap_aabb_sphere(a, b);
+    if (a_primative == .Sphere and b_primative == .AABB) return overlap_aabb_sphere(b, a);
+    @compileError("Unsupported primative overlap: " ++ @tagName(a_primative) ++ " " ++ @tagName(b_primative));
 }
 
 test overlap_aabb_triangle {
@@ -152,4 +165,43 @@ test overlap_aabb_aabb {
     try std.testing.expect(overlap(aabb1, aabb2));
     try std.testing.expect(!overlap(aabb1, aabb3));
     try std.testing.expect(overlap(aabb2, aabb1));
+}
+
+test overlap_aabb_aabb_4 {
+    const box: geometry.AABB(f32) = .from_two_points(.{ 0, 0, 0 }, .{ 2, 2, 2 });
+    // Four candidate boxes packed component-wise: overlapping, far, edge-touching, far.
+    const result = overlap_aabb_aabb_4(
+        box,
+        .{ 1, 5, 2, -5 }, // minX
+        .{ 3, 7, 4, -3 }, // maxX
+        .{ 1, 5, 0, -5 }, // minY
+        .{ 3, 7, 2, -3 }, // maxY
+        .{ 1, 5, 0, -5 }, // minZ
+        .{ 3, 7, 2, -3 }, // maxZ
+    );
+    try std.testing.expectEqual(@Vector(4, bool){ true, false, true, false }, result);
+}
+
+test overlap_aabb_plane {
+    const box: geometry.AABB(f32) = .from_two_points(.{ -1, -1, -1 }, .{ 1, 1, 1 });
+    const through = geometry.Plane(f32).from_point_and_normal(.{ 0, 0, 0 }, .{ 0, 0, 1 });
+    const far = geometry.Plane(f32).from_point_and_normal(.{ 0, 0, 5 }, .{ 0, 0, 1 });
+    try std.testing.expect(overlap_aabb_plane(box, through));
+    try std.testing.expect(!overlap_aabb_plane(box, far));
+    // Routed through the generic dispatcher, both argument orders.
+    try std.testing.expect(overlap(box, through));
+    try std.testing.expect(overlap(through, box));
+    try std.testing.expect(!overlap(box, far));
+}
+
+test overlap_aabb_sphere {
+    const box: geometry.AABB(f32) = .from_two_points(.{ 0, 0, 0 }, .{ 2, 2, 2 });
+    const near: Sphere(f32) = .from_center_radius(.{ 3, 1, 1 }, 1.5); // 1 unit from the face
+    const far: Sphere(f32) = .from_center_radius(.{ 5, 1, 1 }, 1); // 3 units from the face
+    try std.testing.expect(overlap_aabb_sphere(box, near));
+    try std.testing.expect(!overlap_aabb_sphere(box, far));
+    // Routed through the generic dispatcher, both argument orders.
+    try std.testing.expect(overlap(box, near));
+    try std.testing.expect(overlap(near, box));
+    try std.testing.expect(!overlap(box, far));
 }

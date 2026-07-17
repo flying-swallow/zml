@@ -19,10 +19,10 @@ pub const Vec3f64 = @Vector(3, f64);
 pub const Vec2f64 = @Vector(2, f64);
 
 /// Turn a length-N vector into an N x 1 column matrix, for use as the right operand of `mul`.
-pub fn to_mat(vec: anytype) Mat(meta.Child(@TypeOf(vec)), meta.lengthOf(@TypeOf(vec)), 1) {
-    var result: Mat(meta.Child(@TypeOf(vec)), meta.lengthOf(@TypeOf(vec)), 1) = .zero;
+pub fn to_mat(vec: anytype) Mat(meta.Child(@TypeOf(vec)), 1, meta.lengthOf(@TypeOf(vec))) {
+    var result: Mat(meta.Child(@TypeOf(vec)), 1, meta.lengthOf(@TypeOf(vec))) = .zero;
     inline for (0..meta.lengthOf(@TypeOf(vec))) |i| {
-        result.items[i][0] = vec[i];
+        result.items[0][i] = vec[i];
     }
     return result;
 }

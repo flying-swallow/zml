@@ -15,35 +15,106 @@ pub fn InvDirection(comptime T: type) type {
     };
 }
 
-//pub fn ray_cylinder(cylinder: anytype, origin: @Vector(3, @TypeOf(cylinder).child), direction: @Vector(3, @TypeOf(cylinder).child)) std.meta.Float(@bitSizeOf(@TypeOf(cylinder).child)) {
-//    comptime {
-//        std.debug.assert(@TypeOf(cylinder).primative_type == .Cylinder); // ensure cylinder type
-//    }
-//
-//    const orgin_xz = @select(@TypeOf(cylinder).child, .{ true, false, true }, origin, @as(@Vector(3, @TypeOf(cylinder).child), @splat(0)));
-//    const origin_xz_len_sq = zml.vec.norm_sqr(orgin_xz);
-//    const r_sq = cylinder.radius * cylinder.radius;
-//    if (origin_xz_len_sq > r_sq) {
-//        // Ray starts outside the infinite cylinder
-//        // Solve: |RayOrigin_xz + fraction * RayDirection_xz|^2 = r^2 to find fraction
-//        const direction_xz = @select(@TypeOf(cylinder).child, .{ true, false, true }, direction, @as(@Vector(3, @TypeOf(cylinder).child), @splat(0)));
-//        const a = zml.vec.norm_sqr(direction_xz);
-//        const b = 2 * zml.vec.dot(orgin_xz, direction_xz);
-//        const c = origin_xz_len_sq - r_sq;
-//        const root_terms = zml.find_roots(@TypeOf(cylinder).child, a, b, c);
-//        if (root_terms.num_roots == 0) {
-//            return std.math.floatMax(@TypeOf(cylinder).child);
-//        }
-//        // Get fraction corresponding to the ray entering the circle
-//        const fraction = @min(root_terms.roots[0], root_terms.roots[1]);
-//        if (fraction >= 0) {
-//            return fraction;
-//        }
-//    } else {
-//        return 0.0;
-//    }
-//    return std.math.floatMax(@TypeOf(cylinder).child);
-//}
+/// Ray vs finite capped cylinder. Returns the fraction along `direction` of the first
+/// hit (0 if the ray starts inside), or std.math.floatMax(T) if there is no forward hit.
+pub fn ray_cylinder(cylinder: anytype, origin: @Vector(3, @TypeOf(cylinder).child), direction: @Vector(3, @TypeOf(cylinder).child)) @TypeOf(cylinder).child {
+    comptime {
+        std.debug.assert(@TypeOf(cylinder).primative_type == .Cylinder); // ensure cylinder type
+    }
+    const T = @TypeOf(cylinder).child;
+    const V = @Vector(3, T);
+
+    const p0 = cylinder.end_points[0];
+    const u = cylinder.axis(); // unit axis p0 -> p1
+    const h = cylinder.get_height();
+    const r_sq = cylinder.radius * cylinder.radius;
+
+    // Work relative to p0, splitting each vector into axial (along u) and radial parts.
+    const o = origin - p0;
+    const o_axial = zml.vec.dot(o, u);
+    const d_axial = zml.vec.dot(direction, u);
+    const o_perp = o - u * @as(V, @splat(o_axial));
+    const d_perp = direction - u * @as(V, @splat(d_axial));
+
+    // Origin already inside the finite cylinder.
+    if (zml.vec.dot(o_perp, o_perp) <= r_sq and o_axial >= 0 and o_axial <= h) return 0;
+
+    var best = std.math.floatMax(T);
+
+    // Lateral (curved) surface: |o_perp + t*d_perp|^2 = r^2, keeping hits within [0, h].
+    const a = zml.vec.dot(d_perp, d_perp);
+    const b = 2 * zml.vec.dot(o_perp, d_perp);
+    const c = zml.vec.dot(o_perp, o_perp) - r_sq;
+    const roots = zml.find_roots(T, a, b, c);
+    for (0..roots.num_roots) |i| {
+        const t = roots.roots[i];
+        if (t >= 0 and t < best) {
+            const axial_at = o_axial + t * d_axial;
+            if (axial_at >= 0 and axial_at <= h) best = t;
+        }
+    }
+
+    // End caps: planes at axial = 0 and axial = h, accepted where the hit is within the radius.
+    if (d_axial != 0) {
+        const caps = [2]T{ 0, h };
+        for (caps) |cap| {
+            const t = (cap - o_axial) / d_axial;
+            if (t >= 0 and t < best) {
+                const radial = o_perp + d_perp * @as(V, @splat(t));
+                if (zml.vec.dot(radial, radial) <= r_sq) best = t;
+            }
+        }
+    }
+
+    return best;
+}
+
+/// Ray vs sphere. Returns the fraction along `direction` of the first hit (0 if the ray starts
+/// inside the sphere), or std.math.floatMax(T) if there is no forward hit. `direction` need not
+/// be normalized. Adapted from JoltPhysics RaySphere.
+pub fn ray_sphere(sphere: anytype, origin: @Vector(3, @TypeOf(sphere).child), direction: @Vector(3, @TypeOf(sphere).child)) @TypeOf(sphere).child {
+    comptime {
+        std.debug.assert(@TypeOf(sphere).primative_type == .Sphere); // ensure sphere type
+    }
+    const T = @TypeOf(sphere).child;
+
+    // Solve |origin + t*direction - center|^2 = radius^2 for t.
+    const center_origin = origin - sphere.center;
+    const a = zml.vec.dot(direction, direction);
+    const b = 2 * zml.vec.dot(direction, center_origin);
+    const c = zml.vec.dot(center_origin, center_origin) - sphere.radius * sphere.radius;
+    const roots = zml.find_roots(T, a, b, c);
+
+    // No real roots: the (possibly degenerate) ray never crosses the surface. Inside -> 0, else miss.
+    if (roots.num_roots == 0) return if (c <= 0) 0 else std.math.floatMax(T);
+
+    // Sort so the smallest fraction (ray entering the sphere) is first.
+    var f1 = roots.roots[0];
+    var f2 = roots.roots[1];
+    if (f1 > f2) std.mem.swap(T, &f1, &f2);
+
+    if (f1 >= 0) return f1; // Entering the sphere ahead of the origin.
+    if (f2 >= 0) return 0; // Origin is inside the sphere.
+    return std.math.floatMax(T); // Sphere is entirely behind the origin.
+}
+
+/// Ray vs capsule. Returns the fraction along `direction` of the first hit (0 if the ray starts
+/// inside the capsule), or std.math.floatMax(T) if there is no forward hit. `direction` need not
+/// be normalized. Adapted from JoltPhysics RayCapsule, generalised to the arbitrary-axis capsule.
+pub fn ray_capsule(capsule: anytype, origin: @Vector(3, @TypeOf(capsule).child), direction: @Vector(3, @TypeOf(capsule).child)) @TypeOf(capsule).child {
+    comptime {
+        std.debug.assert(@TypeOf(capsule).primative_type == .Capsule); // ensure capsule type
+    }
+    const T = @TypeOf(capsule).child;
+
+    // The capsule is the union of the finite cylinder between the two hemisphere centres and a
+    // sphere at each centre. The first entry into that union is the min over the three parts
+    // (each returns floatMax on a miss and 0 when the origin is already inside it).
+    const cyl = zml.geom.Cylinder(T).from_two_points_radius(capsule.hemisphere_centers[0], capsule.hemisphere_centers[1], capsule.radius);
+    const s0 = zml.geom.Sphere(T).from_center_radius(capsule.hemisphere_centers[0], capsule.radius);
+    const s1 = zml.geom.Sphere(T).from_center_radius(capsule.hemisphere_centers[1], capsule.radius);
+    return @min(ray_cylinder(cyl, origin, direction), @min(ray_sphere(s0, origin, direction), ray_sphere(s1, origin, direction)));
+}
 
 // Ray - Axis Aligned Bounding Box intersection
 // Note: Can return negative t values if the ray origin is inside the AABB
@@ -230,35 +301,92 @@ test ray_triangle {
     }
 }
 
-//test ray_cylinder {
-//    const cylinder: zml.geom.Cylinder(f32) = .from_two_points_radius(.{ 0, 0, 0 }, .{ 0, 0, 2 }, 1.0);
-//    {
-//        // Ray starting outside the cylinder, pointing towards
-//        const origin = @Vector(3, f32){ 2, 0, 1 };
-//        const direction = @Vector(3, f32){ -1, 0, 0 };
-//        const fraction = ray_cylinder(cylinder, origin, direction);
-//        try std.testing.expectApproxEqRel(1.0, fraction, 1.0e-6);
-//    }
-//    {
-//        // Ray starting outside the cylinder, pointing away
-//        const origin = @Vector(3, f32){ 2, 0, 1 };
-//        const direction = @Vector(3, f32){ 1, 0, 0 };
-//        const fraction = ray_cylinder(cylinder, origin, direction);
-//        try std.testing.expectEqual(std.math.floatMax(f32), fraction);
-//    }
-//    {
-//        // Ray starting inside the cylinder
-//        const origin = @Vector(3, f32){ 0.5, 0, 1 };
-//        const direction = @Vector(3, f32){ 1, 0, 0 };
-//        const fraction = ray_cylinder(cylinder, origin, direction);
-//        try std.testing.expectApproxEqRel(0.0, fraction, 1.0e-6);
-//    }
-//}
+test ray_cylinder {
+    const cylinder: zml.geom.Cylinder(f32) = .from_two_points_radius(.{ 0, 0, 0 }, .{ 0, 0, 2 }, 1.0);
+    {
+        // Ray starting outside the cylinder, pointing towards
+        const origin = @Vector(3, f32){ 2, 0, 1 };
+        const direction = @Vector(3, f32){ -1, 0, 0 };
+        const fraction = ray_cylinder(cylinder, origin, direction);
+        try std.testing.expectApproxEqRel(1.0, fraction, 1.0e-6);
+    }
+    {
+        // Ray starting outside the cylinder, pointing away
+        const origin = @Vector(3, f32){ 2, 0, 1 };
+        const direction = @Vector(3, f32){ 1, 0, 0 };
+        const fraction = ray_cylinder(cylinder, origin, direction);
+        try std.testing.expectEqual(std.math.floatMax(f32), fraction);
+    }
+    {
+        // Ray starting inside the cylinder
+        const origin = @Vector(3, f32){ 0.5, 0, 1 };
+        const direction = @Vector(3, f32){ 1, 0, 0 };
+        const fraction = ray_cylinder(cylinder, origin, direction);
+        try std.testing.expectApproxEqRel(0.0, fraction, 1.0e-6);
+    }
+    {
+        // Ray entering through the top cap from above.
+        const origin = @Vector(3, f32){ 0, 0, 5 };
+        const direction = @Vector(3, f32){ 0, 0, -1 };
+        const fraction = ray_cylinder(cylinder, origin, direction);
+        try std.testing.expectApproxEqRel(3.0, fraction, 1.0e-6);
+    }
+}
 
-//pub fn ray_aabb(origin: anytype) {
-//
-//}
+test ray_sphere {
+    const sphere: zml.geom.Sphere(f32) = .from_center_radius(.{ 0, 0, 0 }, 1.0);
+    {
+        // Ray starting outside, pointing towards the sphere: enters at the near surface.
+        const fraction = ray_sphere(sphere, .{ -3, 0, 0 }, .{ 1, 0, 0 });
+        try std.testing.expectApproxEqRel(2.0, fraction, 1.0e-6);
+    }
+    {
+        // Ray starting outside, pointing away: no hit.
+        const fraction = ray_sphere(sphere, .{ -3, 0, 0 }, .{ -1, 0, 0 });
+        try std.testing.expectEqual(std.math.floatMax(f32), fraction);
+    }
+    {
+        // Ray starting inside the sphere: fraction 0.
+        const fraction = ray_sphere(sphere, .{ 0, 0, 0 }, .{ 1, 0, 0 });
+        try std.testing.expectApproxEqRel(0.0, fraction, 1.0e-6);
+    }
+    {
+        // Ray missing the sphere entirely (parallel, offset by more than the radius).
+        const fraction = ray_sphere(sphere, .{ -3, 2, 0 }, .{ 1, 0, 0 });
+        try std.testing.expectEqual(std.math.floatMax(f32), fraction);
+    }
+}
 
-//pub fn ray_intersect_aabb() {
-//
-//}
+test ray_capsule {
+    // Capsule along z from (0,0,-1) to (0,0,1), radius 1: total extent z in [-2, 2].
+    const capsule: zml.geom.Capsule(f32) = .{ .hemisphere_centers = .{ .{ 0, 0, -1 }, .{ 0, 0, 1 } }, .radius = 1 };
+    {
+        // Hit the cylindrical body from the side.
+        const fraction = ray_capsule(capsule, .{ 3, 0, 0 }, .{ -1, 0, 0 });
+        try std.testing.expectApproxEqRel(2.0, fraction, 1.0e-6);
+    }
+    {
+        // Hit the top hemisphere cap coming straight down the axis.
+        const fraction = ray_capsule(capsule, .{ 0, 0, 5 }, .{ 0, 0, -1 });
+        try std.testing.expectApproxEqRel(3.0, fraction, 1.0e-6);
+    }
+    {
+        // Ray starting inside the capsule: fraction 0.
+        const fraction = ray_capsule(capsule, .{ 0, 0, 0 }, .{ 1, 0, 0 });
+        try std.testing.expectApproxEqRel(0.0, fraction, 1.0e-6);
+    }
+    {
+        // Ray passing outside the rounded end (would miss, but a naive infinite cylinder would hit).
+        const fraction = ray_capsule(capsule, .{ 3, 0, 1.9 }, .{ -1, 0, 0 });
+        try std.testing.expectEqual(std.math.floatMax(f32), fraction);
+    }
+}
+
+test "InvDirection" {
+    const dir = @Vector(3, f32){ 1.0, 0.0, -1.0 };
+    const invDir = InvDirection(f32).from_direction(dir);
+    try std.testing.expectEqual(invDir.is_parallel, @Vector(3, bool){ false, true, false });
+    try std.testing.expectApproxEqRel(invDir.inv_direction[0], 1.0, 1.0e-6);
+    try std.testing.expectApproxEqRel(invDir.inv_direction[1], 0.0, 1.0e-6);
+    try std.testing.expectApproxEqRel(invDir.inv_direction[2], -1.0, 1.0e-6);
+}

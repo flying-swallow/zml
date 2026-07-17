@@ -23,10 +23,10 @@ pub const Mat3f32 = Mat(f32, 3, 3);
 pub const Mat3f64 = Mat(f64, 3, 3);
 
 // Affine transform matrices with the implicit last row elided: an N x (N+1) matrix that
-// represents an (N+1) x (N+1) transform. Row-major, so byte-compatible with a compact GPU
-// transform (translation in each row's last element).
-pub const Mat2x3f32 = Mat(f32, 2, 3);
-pub const Mat3x4f32 = Mat(f32, 3, 4);
+// represents an (N+1) x (N+1) transform. Column-major (translation in the contiguous last
+// column), so `&mat` uploads directly to a GPU without a transpose.
+pub const Mat2x3f32 = Mat(f32, 3, 2);
+pub const Mat3x4f32 = Mat(f32, 4, 3);
 
 pub const geom = @import("geometry.zig");
 pub const meta = @import("meta.zig");
