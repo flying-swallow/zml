@@ -98,20 +98,19 @@ pub fn get_translation(m: anytype) @Vector(@TypeOf(m).rows, @TypeOf(m).Type) {
     return result;
 }
 
-/// The per-axis scale of the matrix.
-///
-/// ⚠️ Ported bug: this uses ROW norms, but the true per-axis scale is COLUMN norms. They agree for
-/// pure scale and for uniformly-scaled rotations, but disagree for a rotated non-uniform scale (the
-/// exact case `Transform.sync` builds). This matches mr_geom's `getScale` verbatim so the migration
-/// changes no behavior; the fix (column norms) is a deliberately separate follow-up.
+/// The per-axis scale of the matrix: the magnitude of each transformed basis vector, i.e. the norm
+/// of each COLUMN of the linear part. For a `R*S` transform (`applied(scaling, rotation)`) each
+/// column of `R*S` is `s_j * (column j of R)`, and `R` is orthonormal, so the column norm is exactly
+/// `|s_j|`. (mr_geom's `getScale` used ROW norms, which are only correct for pure scale or a
+/// uniformly-scaled rotation; column norms are correct for rotated non-uniform scale too.)
 pub fn get_scale(m: anytype) @Vector(@TypeOf(m).rows, @TypeOf(m).Type) {
     const dim = @TypeOf(m).rows;
     const T = @TypeOf(m).Type;
     var result: @Vector(dim, T) = undefined;
-    inline for (0..dim) |i| {
-        var lin: @Vector(dim, T) = undefined;
-        inline for (0..dim) |j| lin[j] = m.items[i][j];
-        result[i] = vector.norm(lin);
+    inline for (0..dim) |j| {
+        var col: @Vector(dim, T) = undefined;
+        inline for (0..dim) |i| col[i] = m.items[i][j];
+        result[j] = vector.norm(col);
     }
     return result;
 }
@@ -167,8 +166,20 @@ test "scaling" {
     const m = scaling(@Vector(3, f32){ 0.5, -2.0, 10.0 });
     try std.testing.expectEqual(@Vector(3, f32){ 0.5, -6.0, 50.0 }, times_point(m, @Vector(3, f32){ 1, 3, 5 }));
     try std.testing.expectEqual(@Vector(3, f32){ 0, 0, 0 }, get_translation(m));
-    // Pure scale: row norms == the scale magnitudes.
+    // Pure scale: column norms == the scale magnitudes.
     try std.testing.expectEqual(@Vector(3, f32){ 0.5, 2.0, 10.0 }, get_scale(m));
+}
+
+test "get_scale uses column norms (correct for rotated non-uniform scale)" {
+    // Rotated non-uniform scale: world matrix R*S. The per-axis scale is |s_j| regardless of the
+    // rotation, because R is orthonormal so each column of R*S has magnitude |s_j|. Row norms would
+    // mix axes here (they'd yield {3, 2, 4} for a 90-degree z rotation of diag(2, 3, 4)).
+    const s = @Vector(3, f32){ 2, 3, 4 };
+    const m = applied(
+        scaling(s),
+        rotation(rotor.from_plane_angle(@import("bivec.zig").Bivec3f32{ 0, 0, 1 }, 0.5 * std.math.pi)),
+    );
+    try zml_testing.expect_approx_eq_abs(s, get_scale(m), 1e-4);
 }
 
 test "rotation applies the rotor" {

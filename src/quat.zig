@@ -83,19 +83,23 @@ pub fn from_to(from: anytype, to: @TypeOf(from)) @Vector(4, std.meta.Child(@Type
     return vector.normalize(@Vector(4, std.meta.Child(@TypeOf(from))){ v[0], v[1], v[2], w });
 }
 
-pub fn get_twist(inAxis: anytype) @Vector(4, std.meta.Child(@TypeOf(inAxis))) {
+/// Returns the twist component of quaternion `q` about `axis` (the twist part of a swing-twist
+/// decomposition). `axis` must be normalized. Ported from Jolt's `Quat::GetTwist`.
+pub fn get_twist(q: anytype, axis: @Vector(3, std.meta.Child(@TypeOf(q)))) @Vector(4, std.meta.Child(@TypeOf(q))) {
     comptime {
-        std.debug.assert(@typeInfo(@TypeOf(inAxis)) == .vector);
-        std.debug.assert(@typeInfo(@TypeOf(inAxis)).vector.len == 4);
+        std.debug.assert(@typeInfo(@TypeOf(q)) == .vector);
+        std.debug.assert(@typeInfo(@TypeOf(q)).vector.len == 4);
     }
-
-    const dir = vector.dot(vector.extract(inAxis, 3), inAxis) * inAxis;
-    const twist: @Vector(4, std.meta.Child(@TypeOf(inAxis))) = .{ dir[0], dir[1], dir[2], inAxis[3] };
+    const T = std.meta.Child(@TypeOf(q));
+    const q_xyz = @Vector(3, T){ q[0], q[1], q[2] };
+    // Project the vector part onto the axis; keep the scalar part.
+    const proj = @as(@Vector(3, T), @splat(vector.dot(q_xyz, axis))) * axis;
+    const twist: @Vector(4, T) = .{ proj[0], proj[1], proj[2], q[3] };
     const twist_len = vector.norm_sqr(twist);
-    if (twist_len == 0.0) {
-        return twist / @as(@Vector(4, std.meta.Child(@TypeOf(inAxis))), @splat(std.math.sqrt(twist_len)));
+    if (twist_len != 0.0) {
+        return twist / @as(@Vector(4, T), @splat(std.math.sqrt(twist_len)));
     }
-    return identity(std.meta.Child(@TypeOf(inAxis)));
+    return identity(T);
 }
 
 //TODO: optimize with simd
@@ -403,4 +407,13 @@ test to_axis_angle {
     const aa = to_axis_angle(from_rotation(axis, angle));
     try std.testing.expectApproxEqAbs(angle, aa.angle, 1e-5);
     try std.testing.expect(vector.is_close(aa.axis, axis, 1e-5));
+}
+
+test get_twist {
+    // A rotation purely about the query axis is entirely twist -> returns itself.
+    const qz = from_rotation(z_axis(f32), 0.7);
+    try std.testing.expect(vector.is_close(get_twist(qz, .{ 0, 0, 1 }), qz, 1e-5));
+    // A rotation about a perpendicular axis has no twist about +z -> identity.
+    const qx = from_rotation(x_axis(f32), 0.7);
+    try std.testing.expect(vector.is_close(get_twist(qx, .{ 0, 0, 1 }), identity(f32), 1e-5));
 }

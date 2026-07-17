@@ -26,11 +26,10 @@ pub fn expect_approx_eq_abs(expected: anytype, actual: @TypeOf(expected), tolera
                 try expect_approx_eq_abs(expected[i], actual[i], tolerance);
             }
         },
-        .array => |info| {
+        .array => {
             for (expected, actual) |e, a| {
                 try expect_approx_eq_abs(e, a, tolerance);
             }
-            _ = info;
         },
         .@"struct" => |info| {
             inline for (info.field_names) |field_name| {
