@@ -42,6 +42,12 @@ pub const Segment = @import("geometry/segment.zig").Segment;
 pub const overlap = @import("geometry/overlap.zig");
 pub const ray = @import("geometry/ray.zig");
 pub const contains = @import("geometry/contains.zig");
+pub const closest_point = @import("geometry/closest_point.zig");
+pub const convex_support = @import("geometry/convex_support.zig");
+pub const gjk = @import("geometry/gjk.zig");
+pub const GJK = gjk.GJK;
+pub const epa = @import("geometry/epa.zig");
+pub const EPA = epa.EPA;
 
 test {
     _ = @import("geometry/aabb.zig");
@@ -55,6 +61,10 @@ test {
     _ = @import("geometry/contains.zig");
     _ = @import("geometry/cylinder.zig");
     _ = @import("geometry/segment.zig");
+    _ = @import("geometry/closest_point.zig");
+    _ = @import("geometry/convex_support.zig");
+    _ = @import("geometry/gjk.zig");
+    _ = @import("geometry/epa.zig");
 }
 
 /// Read a fixed-size vector (or array) `T` out of a packed byte buffer. `vertex_index`

@@ -113,6 +113,83 @@ pub fn overlap_aabb_triangle(
     return true;
 }
 
+/// Separating-axis test (Ericson RTCD, 15 axes) for two boxes. `rot` carries box B's orientation
+/// expressed in box A's frame — only its 3x3 rotation is used, its columns being B's local axes in
+/// A's frame — and `t` is B's centre relative to A's centre, in A's frame. `half_a` / `half_b` are
+/// the boxes' half extents. `eps` is added to each |axis| to guard near-parallel edge cross products
+/// whose length is (near) zero. Returns true when the boxes overlap. Ported from JoltPhysics OrientedBox.
+fn sat_box_box(comptime T: type, rot: Mat(T, 4, 4), t: @Vector(3, T), half_a: @Vector(3, T), half_b: @Vector(3, T), eps: T) bool {
+    // r[i][j] = rot(row i, col j) (column-major storage -> items[col][row]); column j is B's axis j.
+    var r: [3][3]T = undefined;
+    inline for (0..3) |i| {
+        inline for (0..3) |j| {
+            r[i][j] = rot.items[j][i];
+        }
+    }
+    // absr[c][i] = |r[i][c]| + eps : component i of |B's axis c| plus the epsilon guard.
+    var absr: [3][3]T = undefined;
+    inline for (0..3) |c| {
+        inline for (0..3) |i| {
+            absr[c][i] = @abs(r[i][c]) + eps;
+        }
+    }
+
+    // Test axes L = A0, A1, A2 (A's own axes).
+    inline for (0..3) |i| {
+        const ra = half_a[i];
+        const rb = half_b[0] * absr[0][i] + half_b[1] * absr[1][i] + half_b[2] * absr[2][i];
+        if (@abs(t[i]) > ra + rb) return false;
+    }
+    // Test axes L = B0, B1, B2 (B's own axes).
+    inline for (0..3) |i| {
+        const ra = half_a[0] * absr[i][0] + half_a[1] * absr[i][1] + half_a[2] * absr[i][2];
+        const rb = half_b[i];
+        if (@abs(t[0] * r[0][i] + t[1] * r[1][i] + t[2] * r[2][i]) > ra + rb) return false;
+    }
+
+    // Nine edge-edge cross-product axes L = Ai x Bj.
+    if (@abs(t[2] * r[1][0] - t[1] * r[2][0]) > half_a[1] * absr[0][2] + half_a[2] * absr[0][1] + half_b[1] * absr[2][0] + half_b[2] * absr[1][0]) return false; // A0 x B0
+    if (@abs(t[2] * r[1][1] - t[1] * r[2][1]) > half_a[1] * absr[1][2] + half_a[2] * absr[1][1] + half_b[0] * absr[2][0] + half_b[2] * absr[0][0]) return false; // A0 x B1
+    if (@abs(t[2] * r[1][2] - t[1] * r[2][2]) > half_a[1] * absr[2][2] + half_a[2] * absr[2][1] + half_b[0] * absr[1][0] + half_b[1] * absr[0][0]) return false; // A0 x B2
+    if (@abs(t[0] * r[2][0] - t[2] * r[0][0]) > half_a[0] * absr[0][2] + half_a[2] * absr[0][0] + half_b[1] * absr[2][1] + half_b[2] * absr[1][1]) return false; // A1 x B0
+    if (@abs(t[0] * r[2][1] - t[2] * r[0][1]) > half_a[0] * absr[1][2] + half_a[2] * absr[1][0] + half_b[0] * absr[2][1] + half_b[2] * absr[0][1]) return false; // A1 x B1
+    if (@abs(t[0] * r[2][2] - t[2] * r[0][2]) > half_a[0] * absr[2][2] + half_a[2] * absr[2][0] + half_b[0] * absr[1][1] + half_b[1] * absr[0][1]) return false; // A1 x B2
+    if (@abs(t[1] * r[0][0] - t[0] * r[1][0]) > half_a[0] * absr[0][1] + half_a[1] * absr[0][0] + half_b[1] * absr[2][2] + half_b[2] * absr[1][2]) return false; // A2 x B0
+    if (@abs(t[1] * r[0][1] - t[0] * r[1][1]) > half_a[0] * absr[1][1] + half_a[1] * absr[1][0] + half_b[0] * absr[2][2] + half_b[2] * absr[0][2]) return false; // A2 x B1
+    if (@abs(t[1] * r[0][2] - t[0] * r[1][2]) > half_a[0] * absr[2][1] + half_a[1] * absr[2][0] + half_b[0] * absr[1][2] + half_b[1] * absr[0][2]) return false; // A2 x B2
+
+    // No separating axis found.
+    return true;
+}
+
+/// Oriented-box vs oriented-box overlap via the separating-axis theorem. `eps` guards near-parallel
+/// edge cross products (JoltPhysics uses 1.0e-6 by default).
+pub fn overlap_obb_obb(a: anytype, b: anytype, eps: @TypeOf(a).child) bool {
+    comptime {
+        std.debug.assert(@TypeOf(a).child == @TypeOf(b).child);
+        std.debug.assert(@TypeOf(a).primative_type == .OrientedBox);
+        std.debug.assert(@TypeOf(b).primative_type == .OrientedBox);
+    }
+    const T = @TypeOf(a).child;
+    // Express B in A's frame: rot = inverse(A.orientation) * B.orientation.
+    const rot = a.orientation.inverse_ortho().mul(b.orientation);
+    return sat_box_box(T, rot, rot.position(), a.half_extent, b.half_extent, eps);
+}
+
+/// Oriented-box vs axis-aligned-box overlap via the separating-axis theorem. The AABB is treated as
+/// box A (its frame is the world, so no rotation) and the OBB as box B expressed relative to the
+/// AABB centre. `eps` guards near-parallel edge cross products.
+pub fn overlap_obb_aabb(obb: anytype, aabb: anytype, eps: @TypeOf(obb).child) bool {
+    comptime {
+        std.debug.assert(@TypeOf(obb).child == @TypeOf(aabb).child);
+        std.debug.assert(@TypeOf(obb).primative_type == .OrientedBox);
+        std.debug.assert(@TypeOf(aabb).primative_type == .AABB);
+    }
+    const T = @TypeOf(obb).child;
+    const t = obb.orientation.position() - aabb.get_center();
+    return sat_box_box(T, obb.orientation, t, aabb.get_extent(), obb.half_extent, eps);
+}
+
 // generic overlap function
 pub inline fn overlap(a: anytype, b: anytype) bool {
     const a_primative: geometry.Primative = @TypeOf(a).primative_type;
@@ -123,6 +200,9 @@ pub inline fn overlap(a: anytype, b: anytype) bool {
     if (a_primative == .Plane and b_primative == .AABB) return overlap_aabb_plane(b, a);
     if (a_primative == .AABB and b_primative == .Sphere) return overlap_aabb_sphere(a, b);
     if (a_primative == .Sphere and b_primative == .AABB) return overlap_aabb_sphere(b, a);
+    if (a_primative == .OrientedBox and b_primative == .OrientedBox) return overlap_obb_obb(a, b, 1.0e-6);
+    if (a_primative == .OrientedBox and b_primative == .AABB) return overlap_obb_aabb(a, b, 1.0e-6);
+    if (a_primative == .AABB and b_primative == .OrientedBox) return overlap_obb_aabb(b, a, 1.0e-6);
     @compileError("Unsupported primative overlap: " ++ @tagName(a_primative) ++ " " ++ @tagName(b_primative));
 }
 
@@ -203,5 +283,42 @@ test overlap_aabb_sphere {
     // Routed through the generic dispatcher, both argument orders.
     try std.testing.expect(overlap(box, near));
     try std.testing.expect(overlap(near, box));
+    try std.testing.expect(!overlap(box, far));
+}
+
+test overlap_obb_obb {
+    const OBB = geometry.OrientedBoundedBox(f32);
+    const I = Mat(f32, 4, 4).identity;
+    const unit: @Vector(3, f32) = .{ 1, 1, 1 };
+    const a = OBB.from_orientation_and_half_extent(I, unit);
+    // Axis-aligned: centres 1.5 apart (gap < 2) overlap; 3 apart (gap > 2) are separated.
+    const b = OBB.from_orientation_and_half_extent(I.modify_column(3, @as(@Vector(3, f32), .{ 1.5, 0, 0 })), unit);
+    const c = OBB.from_orientation_and_half_extent(I.modify_column(3, @as(@Vector(3, f32), .{ 3, 0, 0 })), unit);
+    try std.testing.expect(overlap_obb_obb(a, b, 1.0e-6));
+    try std.testing.expect(!overlap_obb_obb(a, c, 1.0e-6));
+    // Generic dispatcher, both orders.
+    try std.testing.expect(overlap(a, b));
+    try std.testing.expect(overlap(b, a));
+
+    // Rotated 45 deg about z reaches sqrt(2) ~ 1.414 along x, so combined reach ~2.414: overlap at
+    // centre 2.3, separated at 2.6.
+    const r45 = I.rotate(std.math.pi / 4.0, .{ 0, 0, 1 });
+    const d = OBB.from_orientation_and_half_extent(r45.modify_column(3, @as(@Vector(3, f32), .{ 2.3, 0, 0 })), unit);
+    const e = OBB.from_orientation_and_half_extent(r45.modify_column(3, @as(@Vector(3, f32), .{ 2.6, 0, 0 })), unit);
+    try std.testing.expect(overlap_obb_obb(a, d, 1.0e-6));
+    try std.testing.expect(!overlap_obb_obb(a, e, 1.0e-6));
+}
+
+test overlap_obb_aabb {
+    const OBB = geometry.OrientedBoundedBox(f32);
+    const I = Mat(f32, 4, 4).identity;
+    const box: geometry.AABB(f32) = .from_two_points(.{ -1, -1, -1 }, .{ 1, 1, 1 });
+    const near = OBB.from_orientation_and_half_extent(I.modify_column(3, @as(@Vector(3, f32), .{ 1.5, 0, 0 })), .{ 1, 1, 1 });
+    const far = OBB.from_orientation_and_half_extent(I.modify_column(3, @as(@Vector(3, f32), .{ 3, 0, 0 })), .{ 1, 1, 1 });
+    try std.testing.expect(overlap_obb_aabb(near, box, 1.0e-6));
+    try std.testing.expect(!overlap_obb_aabb(far, box, 1.0e-6));
+    // Generic dispatcher, both orders.
+    try std.testing.expect(overlap(near, box));
+    try std.testing.expect(overlap(box, near));
     try std.testing.expect(!overlap(box, far));
 }

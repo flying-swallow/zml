@@ -1,16 +1,16 @@
-# Zig Math Library (ZML)
+# Caliper
 
 [![CI](https://github.com/flying-swallow/zig-linear-algebra/actions/workflows/ci.yml/badge.svg)](https://github.com/flying-swallow/zig-linear-algebra/actions/workflows/ci.yml)
 
-A high-performance linear algebra library for Zig, providing vector, matrix, quaternion, and geometry operations.
+A high-performance SIMD linear algebra, geometry, and GJK/EPA collision library for Zig, providing vector, matrix, quaternion, and geometry operations.
 
 ## Features
 
-- **Vectors** (`zml.vec`) — norm, dot, cross, normalize, reflect, distance, angle, swizzle, fused `sin_cos`, and more.
-- **Matrices** (`zml.Mat`) — generic column-major `Mat(T, cols, rows)` (`items: [cols][rows]T`, GPU-upload ready) with multiply, transforms, etc.
-- **Quaternions** (`zml.quat`) — rotation, slerp/nlerp, axis-angle and Euler conversions.
-- **Geometry** (`zml.geom`) — AABB, sphere, plane, capsule, OBB, ray, frustum, overlap/containment tests.
-- Extras: `zml.scalar` (clamp/lerp/smoothstep), `zml.color`, `zml.packing`, `zml.random`.
+- **Vectors** (`caliper.vec`) — norm, dot, cross, normalize, reflect, distance, angle, swizzle, fused `sin_cos`, and more.
+- **Matrices** (`caliper.Mat`) — generic column-major `Mat(T, cols, rows)` (`items: [cols][rows]T`, GPU-upload ready) with multiply, transforms, etc.
+- **Quaternions** (`caliper.quat`) — rotation, slerp/nlerp, axis-angle and Euler conversions.
+- **Geometry** (`caliper.geom`) — AABB, sphere, plane, capsule, OBB, ray, frustum, overlap/containment tests.
+- Extras: `caliper.scalar` (clamp/lerp/smoothstep), `caliper.color`, `caliper.packing`, `caliper.random`.
 - Built on Zig's native `@Vector` SIMD types — **but functions also accept plain arrays** (see below).
 
 ## Installation
@@ -22,26 +22,26 @@ zig fetch --save "git+https://github.com/flying-swallow/zig-linear-algebra.git"
 Then in your `build.zig`:
 
 ```zig
-const zml = b.dependency("zml", .{
+const caliper = b.dependency("caliper", .{
     .target = target,
     .optimize = optimize,
 });
 
-exe.root_module.addImport("zml", zml.module("zml"));
+exe.root_module.addImport("caliper", caliper.module("caliper"));
 ```
 
 ## Usage
 
 ```zig
-const zml = @import("zml");
+const caliper = @import("caliper");
 
-const a = zml.Vec3f32{ 1, 2, 3 }; // @Vector(3, f32)
-const b = zml.Vec3f32{ 4, 5, 6 };
+const a = caliper.Vec3f32{ 1, 2, 3 }; // @Vector(3, f32)
+const b = caliper.Vec3f32{ 4, 5, 6 };
 
-const d = zml.vec.dot(a, b);       // f32 = 32
-const c = zml.vec.cross(a, b);     // @Vector(3, f32)
-const n = zml.vec.normalize(a);    // @Vector(3, f32)
-const r = zml.vec.sin_cos(a);      // .{ .sin_out, .cos_out }
+const d = caliper.vec.dot(a, b);       // f32 = 32
+const c = caliper.vec.cross(a, b);     // @Vector(3, f32)
+const n = caliper.vec.normalize(a);    // @Vector(3, f32)
+const r = caliper.vec.sin_cos(a);      // .{ .sin_out, .cos_out }
 ```
 
 ## `@Vector` and array inputs
@@ -52,8 +52,8 @@ vector in → vector out):
 
 ```zig
 const arr = [3]f32{ 1, 2, 3 };
-const d  = zml.vec.dot(arr, arr);     // f32
-const nz = zml.vec.normalize(arr);    // [3]f32
+const d  = caliper.vec.dot(arr, arr);     // f32
+const nz = caliper.vec.normalize(arr);    // [3]f32
 ```
 
 Arrays are meant for arbitrarily long data. Rather than coercing a large array into one wide

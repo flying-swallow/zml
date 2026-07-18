@@ -1,7 +1,7 @@
 .{
-    .name = .zml,
-    .version = "0.2.0",
-    .fingerprint = 0x32700c0d44ccd0f5, // Changing this has security and trust implications.
+    .name = .caliper,
+    .version = "0.3.0",
+    .fingerprint = 0xc06909ecd7189f0, // Changing this has security and trust implications.
     .dependencies = .{
         .zbench = .{
             .url = "git+https://github.com/hendriknielaender/zBench.git#f12a2262bcd9d300207890555c577da5e29de453",

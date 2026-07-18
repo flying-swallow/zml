@@ -376,8 +376,9 @@ test ray_capsule {
         try std.testing.expectApproxEqRel(0.0, fraction, 1.0e-6);
     }
     {
-        // Ray passing outside the rounded end (would miss, but a naive infinite cylinder would hit).
-        const fraction = ray_capsule(capsule, .{ 3, 0, 1.9 }, .{ -1, 0, 0 });
+        // Ray passing above the rounded end at z = 2.5: an infinite cylinder would hit, but the
+        // finite capsule (body z in [-1,1], spheres reaching z = 2) misses.
+        const fraction = ray_capsule(capsule, .{ 3, 0, 2.5 }, .{ -1, 0, 0 });
         try std.testing.expectEqual(std.math.floatMax(f32), fraction);
     }
 }

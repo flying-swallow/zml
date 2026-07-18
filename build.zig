@@ -4,7 +4,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const root_module = b.addModule("zml", .{
+    const root_module = b.addModule("caliper", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
         .optimize = optimize,
@@ -29,7 +29,7 @@ pub fn build(b: *std.Build) void {
                     .target = target,
                     .optimize = optimize,
                     .imports = &.{
-                        .{ .name = "zml", .module = root_module },
+                        .{ .name = "caliper", .module = root_module },
                         .{ .name = "zbench", .module = zbench_dep.module("zbench") },
                     },
                 }),

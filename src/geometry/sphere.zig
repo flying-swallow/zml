@@ -32,6 +32,20 @@ pub fn Sphere(comptime T: type) type {
             return self.center + zml.vec.normalize(direction) * @as(@Vector(3, T), @splat(self.radius));
         }
 
+        /// Grow the sphere just enough to contain `point`. A point already inside is a no-op.
+        /// Adapted from JoltPhysics Sphere::EncapsulatePoint.
+        pub fn encapsulate_point(self: Self, point: @Vector(3, T)) Self {
+            const d_vec = point - self.center;
+            const d_sq = zml.vec.norm_sqr(d_vec);
+            if (d_sq <= self.radius * self.radius) return self;
+            const d = @sqrt(d_sq);
+            const radius = 0.5 * (self.radius + d);
+            return .{
+                .center = self.center + d_vec * @as(@Vector(3, T), @splat((radius - self.radius) / d)),
+                .radius = radius,
+            };
+        }
+
         /// Transform by a 4x4 matrix. The radius is scaled by the largest axis scale, giving a
         /// conservative bounding sphere under non-uniform scale.
         pub fn transform(self: Self, mat: zml.Mat(T, 4, 4)) Self {
@@ -52,6 +66,20 @@ test "sphere translate" {
     const moved = s.translate(.{ 1, 1, 1 });
     try std.testing.expect(zml.vec.is_close_default(moved.center, .{ 2, 3, 4 }));
     try std.testing.expectEqual(@as(f32, 2), moved.radius);
+}
+
+test "sphere encapsulate_point" {
+    const s: Sphere(f32) = .from_center_radius(.{ 0, 0, 0 }, 1);
+    // Point inside: sphere unchanged.
+    const in = s.encapsulate_point(.{ 0.5, 0, 0 });
+    try std.testing.expect(zml.vec.is_close_default(in.center, .{ 0, 0, 0 }));
+    try std.testing.expectApproxEqRel(@as(f32, 1), in.radius, 1.0e-6);
+    // Point outside at x = 3: new sphere spans x in [-1, 3] -> center (1,0,0), radius 2.
+    const out = s.encapsulate_point(.{ 3, 0, 0 });
+    try std.testing.expect(zml.vec.is_close_default(out.center, .{ 1, 0, 0 }));
+    try std.testing.expectApproxEqRel(@as(f32, 2), out.radius, 1.0e-6);
+    // The far point lies on the enlarged surface and the original sphere is still contained.
+    try std.testing.expectApproxEqRel(@as(f32, 2), zml.vec.distance(out.center, .{ 3, 0, 0 }), 1.0e-6);
 }
 
 test "sphere transform" {
